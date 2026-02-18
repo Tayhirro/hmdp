@@ -15,12 +15,8 @@ import cn.hutool.core.bean.BeanUtil;
 
 import static com.hmdp.utils.RedisConstants.FOLLOW_KEY;
 
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -63,9 +59,6 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         if (isFollow == null) {
             return Result.fail("关注状态不能为空");
         }
-        if (userService.getById(followUserId) == null) {
-            return Result.fail("目标用户不存在");
-        }
 
         boolean existed = query().eq("user_id", userId).eq("follow_user_id", followUserId).one() != null;
         boolean needFollow = isFollow;
@@ -75,7 +68,6 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
         String key = FOLLOW_KEY + userId;
         String member = followUserId.toString();
-        ensureFollowSetCached(userId);
         if (needFollow) {
             Follow follow = new Follow();
             follow.setUserId(userId);
@@ -92,9 +84,12 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             redisTemplate.opsForSet().add(key, member);
         } else {
             boolean removed = remove(new QueryWrapper<Follow>().eq("user_id", userId).eq("follow_user_id", followUserId));
-            boolean stillExist = query().eq("user_id", userId).eq("follow_user_id", followUserId).one() != null;
-            if (!removed && stillExist) {
-                return Result.fail("取消关注失败");
+            if (!removed) {
+                // 并发下可能已被其他请求删除，此时按幂等成功处理
+                boolean existedNow = query().eq("user_id", userId).eq("follow_user_id", followUserId).one() != null;
+                if (existedNow) {
+                    return Result.fail("取消关注失败");
+                }
             }
             redisTemplate.opsForSet().remove(key, member);
         }
@@ -106,11 +101,17 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         if (userId == null) {
             return Result.fail("用户ID不能为空");
         }
-        List<Long> followUserIds = listFollowUserIds(userId);
-        if (followUserIds.isEmpty()) {
+        List<Follow> follows = query().eq("user_id", userId).list();
+        if (follows == null || follows.isEmpty()) {
             return Result.ok(Collections.emptyList());
         }
-        return Result.ok(toOrderedUserDTOs(followUserIds));
+        List<Long> followUserIds = follows.stream().map(Follow::getFollowUserId).collect(Collectors.toList());
+        List<User> users = userService.listByIds(followUserIds);
+        if (users == null || users.isEmpty()) {
+            return Result.ok(Collections.emptyList());
+        }
+        List<UserDTO> userDTOs = users.stream().map(user -> BeanUtil.copyProperties(user, UserDTO.class)).collect(Collectors.toList());
+        return Result.ok(userDTOs);
     }
 
     @Override
@@ -123,11 +124,15 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             return Result.fail("目标用户不能为空");
         }
         Long myId = current.getId();
-        List<Long> ids = getCommonFollowIds(myId, userId);
-        if (ids.isEmpty()) {
+        Set<Object> followIds = redisTemplate.opsForSet().intersect(FOLLOW_KEY + myId, FOLLOW_KEY + userId);
+        if (followIds == null || followIds.isEmpty()) {
             return Result.ok(Collections.emptyList());
         }
-        return Result.ok(toOrderedUserDTOs(ids));
+        List<Long> ids = followIds.stream().map(id -> Long.valueOf(id.toString())).collect(Collectors.toList());
+        //follow-id  --->  user ---> userDTO
+        List<User> followUsers = userService.listByIds(ids); 
+        List<UserDTO> userDTOs = followUsers.stream().map(user -> BeanUtil.copyProperties(user, UserDTO.class)).collect(Collectors.toList());
+        return Result.ok(userDTOs);
     }
 
     @Override 
@@ -140,90 +145,16 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             return Result.fail("目标用户不能为空");
         }
         Long selfId = current.getId();
-        if (selfId.equals(followUserId)) {
-            return Result.ok(false);
-        }
-        ensureFollowSetCached(selfId);
-        String key = FOLLOW_KEY + selfId;
         // 先查询redis
-        Boolean isFollow = redisTemplate.opsForSet().isMember(key, followUserId.toString());
-        if (isFollow != null) {
-            return Result.ok(isFollow);
+        Boolean isFollow = redisTemplate.opsForSet().isMember(FOLLOW_KEY + selfId, followUserId.toString());
+        if (Boolean.TRUE.equals(isFollow)) {
+            return Result.ok(true);
         }
-        // redis 异常兜底数据库
-        return Result.ok(query().eq("user_id", selfId).eq("follow_user_id", followUserId).one() != null);
-    }
-
-    private List<Long> getCommonFollowIds(Long myId, Long otherUserId) {
-        ensureFollowSetCached(myId);
-        ensureFollowSetCached(otherUserId);
-        Set<Object> redisIds = redisTemplate.opsForSet().intersect(FOLLOW_KEY + myId, FOLLOW_KEY + otherUserId);
-        if (redisIds != null && !redisIds.isEmpty()) {
-            return redisIds.stream()
-                    .map(id -> Long.valueOf(id.toString()))
-                    .collect(Collectors.toList());
+        // redis 没命中时兜底数据库
+        boolean isExist = query().eq("user_id", selfId).eq("follow_user_id", followUserId).one() != null;
+        if (isExist) {
+            redisTemplate.opsForSet().add(FOLLOW_KEY + selfId, followUserId.toString());
         }
-
-        // Redis 为空时兜底数据库，避免缓存冷启动直接返回空
-        List<Long> myFollowIds = listFollowUserIds(myId);
-        if (myFollowIds.isEmpty()) {
-            return Collections.emptyList();
-        }
-        Set<Long> otherFollowIdSet = new HashSet<>(listFollowUserIds(otherUserId));
-        if (otherFollowIdSet.isEmpty()) {
-            return Collections.emptyList();
-        }
-        return myFollowIds.stream()
-                .filter(otherFollowIdSet::contains)
-                .distinct()
-                .collect(Collectors.toList());
-    }
-
-    private List<Long> listFollowUserIds(Long userId) {
-        return query()
-                .select("follow_user_id", "create_time")
-                .eq("user_id", userId)
-                .orderByDesc("create_time")
-                .list()
-                .stream()
-                .map(Follow::getFollowUserId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
-    }
-
-    private void ensureFollowSetCached(Long userId) {
-        String key = FOLLOW_KEY + userId;
-        if (Boolean.TRUE.equals(redisTemplate.hasKey(key))) {
-            return;
-        }
-        List<Long> followUserIds = listFollowUserIds(userId);
-        if (followUserIds.isEmpty()) {
-            return;
-        }
-        String[] members = followUserIds.stream()
-                .map(String::valueOf)
-                .toArray(String[]::new);
-        redisTemplate.opsForSet().add(key, (Object[]) members);
-    }
-
-    private List<UserDTO> toOrderedUserDTOs(List<Long> userIds) {
-        if (userIds == null || userIds.isEmpty()) {
-            return Collections.emptyList();
-        }
-        List<User> users = userService.listByIds(userIds);
-        if (users == null || users.isEmpty()) {
-            return Collections.emptyList();
-        }
-        Map<Long, UserDTO> userDTOMap = users.stream()
-                .collect(Collectors.toMap(User::getId, user -> BeanUtil.copyProperties(user, UserDTO.class), (a, b) -> a));
-
-        List<UserDTO> orderedUserDTOs = new ArrayList<>(userIds.size());
-        for (Long userId : userIds) {
-            UserDTO userDTO = userDTOMap.get(userId);
-            if (userDTO != null) {
-                orderedUserDTOs.add(userDTO);
-            }
-        }
-        return orderedUserDTOs;
+        return Result.ok(isExist);
     }
 }
