@@ -4,7 +4,12 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.entity.Blog;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.service.IBlogService;
+import com.hmdp.utils.UserHolder;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY; 
 
 /**
  * <p>
@@ -17,4 +22,22 @@ import org.springframework.stereotype.Service;
 @Service
 public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IBlogService {
     
+    @Autowired
+    private RedisTemplate<String, Object> redisTemplate;
+    
+
+    @Override
+    public void saveBlog(){
+
+
+    }
+    @Override
+    public Result likeBlog(Long id){
+        Long userId = UserHolder.getUser().getId();
+        String key = BLOG_LIKED_KEY + id;
+
+        
+
+    }
+
 }
