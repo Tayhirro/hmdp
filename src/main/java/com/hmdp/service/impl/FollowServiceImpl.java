@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 /**
@@ -38,7 +38,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
 
     @Autowired
-    private RedisTemplate<String, Object> redisTemplate;
+    private StringRedisTemplate stringRedisTemplate;
 
     @Autowired
     private IUserService userService;
@@ -78,10 +78,10 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
                     return Result.fail("关注失败");
                 }
             }catch (DuplicateKeyException e){
-                redisTemplate.opsForSet().add(key, member);
+                stringRedisTemplate.opsForSet().add(key, member);
                 return Result.ok();
             }
-            redisTemplate.opsForSet().add(key, member);
+            stringRedisTemplate.opsForSet().add(key, member);
         } else {
             boolean removed = remove(new QueryWrapper<Follow>().eq("user_id", userId).eq("follow_user_id", followUserId));
             if (!removed) {
@@ -91,7 +91,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
                     return Result.fail("取消关注失败");
                 }
             }
-            redisTemplate.opsForSet().remove(key, member);
+            stringRedisTemplate.opsForSet().remove(key, member);
         }
         return Result.ok();
     }
@@ -124,7 +124,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             return Result.fail("目标用户不能为空");
         }
         Long myId = current.getId();
-        Set<Object> followIds = redisTemplate.opsForSet().intersect(FOLLOW_KEY + myId, FOLLOW_KEY + userId);
+        Set<Object> followIds = stringRedisTemplate.opsForSet().intersect(FOLLOW_KEY + myId, FOLLOW_KEY + userId);
         if (followIds == null || followIds.isEmpty()) {
             return Result.ok(Collections.emptyList());
         }
@@ -146,14 +146,14 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         }
         Long selfId = current.getId();
         // 先查询redis
-        Boolean isFollow = redisTemplate.opsForSet().isMember(FOLLOW_KEY + selfId, followUserId.toString());
+        Boolean isFollow = stringRedisTemplate.opsForSet().isMember(FOLLOW_KEY + selfId, followUserId.toString());
         if (Boolean.TRUE.equals(isFollow)) {
             return Result.ok(true);
         }
         // redis 没命中时兜底数据库
         boolean isExist = query().eq("user_id", selfId).eq("follow_user_id", followUserId).one() != null;
         if (isExist) {
-            redisTemplate.opsForSet().add(FOLLOW_KEY + selfId, followUserId.toString());
+            stringRedisTemplate.opsForSet().add(FOLLOW_KEY + selfId, followUserId.toString());
         }
         return Result.ok(isExist);
     }

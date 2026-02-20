@@ -7,7 +7,7 @@ import com.hmdp.mapper.BlogMapper;
 import com.hmdp.service.IBlogService;
 import com.hmdp.utils.UserHolder;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY; 
 
@@ -23,7 +23,7 @@ import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY;
 public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IBlogService {
     
     @Autowired
-    private RedisTemplate<String, Object> stringRedisTemplate;
+    private StringRedisTemplate stringRedisTemplate;
     
 
     @Override
