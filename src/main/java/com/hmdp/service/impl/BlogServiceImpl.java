@@ -27,11 +27,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     
 
     @Override
-    public void saveBlog(){
-
-
-    }
-    @Override
     public Result likeBlog(Long id){
         Long userId = UserHolder.getUser().getId();
         String key = BLOG_LIKED_KEY + id;
