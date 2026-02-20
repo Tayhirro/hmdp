@@ -33,7 +33,7 @@ const isLoadingMore = ref(false)
 const isReachEnd = ref(false)
 
 const { data: firstBlogs } = await useAsyncData('hot-blogs-1', () => $apiData<Blog[]>('/blog/hot?current=1'))
-blogs.value = firstBlogs.value ?? []
+blogs.value = (firstBlogs.value ?? []).map(b => ({ ...b, isLike: Boolean(b.isLike) }))
 
 function blogCover(images: string) {
   return resolveImgUrl(firstCsvItem(images)) || '/imgs/blogs/blog1.jpg'
@@ -51,7 +51,7 @@ async function loadMoreBlogs() {
       isReachEnd.value = true
       return
     }
-    blogs.value.push(...more)
+    blogs.value.push(...more.map(b => ({ ...b, isLike: Boolean(b.isLike) })))
     blogPage.value = next
   } catch (error) {
     toast.add({
@@ -67,8 +67,14 @@ async function loadMoreBlogs() {
 
 async function likeBlog(blog: Blog) {
   try {
-    await $apiData<void>(`/blog/like/${blog.id}`, { method: 'PUT' })
-    blog.liked = (blog.liked || 0) + 1
+    const message = await $apiData<string>(`/blog/like/${blog.id}`, { method: 'PUT' })
+    if (message?.includes('取消')) {
+      blog.liked = Math.max(0, (blog.liked || 0) - 1)
+      blog.isLike = false
+    } else {
+      blog.liked = (blog.liked || 0) + 1
+      blog.isLike = true
+    }
   } catch (error) {
     const statusCode = (error as any)?.statusCode
     if (statusCode === 401) {
@@ -181,9 +187,18 @@ async function likeBlog(blog: Blog) {
                   </span>
                 </div>
 
-                <UButton size="xs" variant="ghost" color="neutral" @click="likeBlog(b)">
-                  <UIcon name="i-lucide-thumbs-up" class="size-4" />
-                  <span class="ml-1 text-sm">
+                <UButton
+                  size="xs"
+                  variant="ghost"
+                  :color="b.isLike ? 'primary' : 'neutral'"
+                  @click="likeBlog(b)"
+                >
+                  <UIcon
+                    name="i-lucide-thumbs-up"
+                    class="size-4"
+                    :class="b.isLike ? 'text-primary' : 'text-muted'"
+                  />
+                  <span class="ml-1 text-sm" :class="b.isLike ? 'text-primary' : 'text-muted'">
                     {{ b.liked }}
                   </span>
                 </UButton>

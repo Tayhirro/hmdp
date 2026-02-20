@@ -32,14 +32,14 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         String key = BLOG_LIKED_KEY + id;
         Double score = stringRedisTemplate.opsForZSet().score(key, userId.toString());
         if (score == null){
-            stringRedisTemplate.opsForZSet().add(key, userId.toString(), System.currentTimeMillis());
             //db操作
             update().setSql("liked = liked + 1").eq("id", id).update();
+            stringRedisTemplate.opsForZSet().add(key, userId.toString(), System.currentTimeMillis());
             return Result.ok("点赞成功");
         }else{
-            stringRedisTemplate.opsForZSet().remove(key, userId.toString());
             //db操作
             update().setSql("liked = liked - 1").eq("id", id).update();
+            stringRedisTemplate.opsForZSet().remove(key, userId.toString());
             return Result.ok("取消点赞成功");
         }
     }
