@@ -45,8 +45,7 @@ public class BlogController {
 
     @PutMapping("/like/{id}")
     public Result likeBlog(@PathVariable("id") Long id) {
-        // TODO: 点赞/取消点赞逻辑下沉到 BlogServiceImpl.likeBlog(id)
-        return Result.fail("TODO: 实现点赞逻辑");
+        return blogService.likeBlog(id);
     }
 
     /**
