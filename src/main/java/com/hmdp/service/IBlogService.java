@@ -13,11 +13,12 @@ import com.hmdp.entity.Blog;
  * @since 2021-12-22
  */
 public interface IBlogService extends IService<Blog> {
-    Result likeBlog(Long id);
+    Result likeBlog(Long id);   // user: 点赞 blog
+    Result queryBlogLikes(Long id); // user: 查询 blog的 likes数量
+    Result queryBlogOfFollow(Long max, Integer offset); // user: 查询关注的blog
+    Result queryHotBlog(Integer current); // user: 查询热门blog
+    
+    Result saveBlog(Blog blog); // author: 保存 blog
 
-    Result queryHotBlog(Integer current);
 
-    Result queryBlogLikes(Long id, Integer offset, Integer size);
-
-    Result queryBlogOfFollow(Long max, Integer offset);
 }
