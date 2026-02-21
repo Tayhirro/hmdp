@@ -81,7 +81,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         if (currentUser != null) {
             ctx.setUserId(currentUser.getId());
         }
-
+        // page 排序逻辑
         Page<Long> idPage = hotStrategy.rank(ctx);
         List<Long> ids = idPage.getRecords();
         if (ids == null || ids.isEmpty()) {
