@@ -96,7 +96,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         });
         return Result.ok(blogs);
     }
-
     private void fillBlogUser(Blog blog) {
         Long userId = blog.getUserId();
         if (userId == null) {
@@ -109,7 +108,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         blog.setName(user.getNickName());
         blog.setIcon(user.getIcon());
     }
-
     private void fillBlogLikedFlag(Blog blog) {
         UserDTO user = UserHolder.getUser();
         if (user == null || user.getId() == null) {
@@ -119,6 +117,18 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         String key = BLOG_LIKED_KEY + blog.getId();
         Double score = stringRedisTemplate.opsForZSet().score(key, user.getId().toString());
         blog.setIsLike(score != null);
+    }
+
+
+    @Override
+    public Result queryBlogLikes(Long id) {
+        return Result.ok(stringRedisTemplate.opsForZSet().range(BLOG_LIKED_KEY + id, 0, 9));
+    }
+
+    // 查询我关注的博主的博客 
+    @Override 
+    public Result queryBlogOfFollow(Long max, Integer offset) {
+        
     }
 
 }
