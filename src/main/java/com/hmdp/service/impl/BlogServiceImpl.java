@@ -76,9 +76,10 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         Long userId = UserHolder.getUser().getId();
         String userIdStr = userId.toString();
         String key = BLOG_LIKED_KEY + id;
+        // 缓存---数据库
         Double score = stringRedisTemplate.opsForZSet().score(key, userIdStr);
         boolean isLiked = score != null;
-        // 存入数据库 
+        
         if (!isLiked) {
             BlogLike likeRecord = queryLikeRecordFromDb(id, userId);
             if (likeRecord != null) {
@@ -98,27 +99,27 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             }
             stringRedisTemplate.opsForZSet().remove(key, userIdStr);
             return Result.ok("取消点赞成功");
-        }
+        } else {
+            LocalDateTime now = LocalDateTime.now();
+            BlogLike blogLike = new BlogLike()
+                    .setBlogId(id)
+                    .setUserId(userId)
+                    .setCreateTime(now);
+            try {
+                blogLikeMapper.insert(blogLike);
+            } catch (DuplicateKeyException e) {
+                BlogLike existed = queryLikeRecordFromDb(id, userId);
+                stringRedisTemplate.opsForZSet().add(key, userIdStr, toEpochMilli(existed == null ? now : existed.getCreateTime()));
+                return Result.ok("点赞成功");
+            }
 
-        LocalDateTime now = LocalDateTime.now();
-        BlogLike blogLike = new BlogLike()
-                .setBlogId(id)
-                .setUserId(userId)
-                .setCreateTime(now);
-        try {
-            blogLikeMapper.insert(blogLike);
-        } catch (DuplicateKeyException e) {
-            BlogLike existed = queryLikeRecordFromDb(id, userId);
-            stringRedisTemplate.opsForZSet().add(key, userIdStr, toEpochMilli(existed == null ? now : existed.getCreateTime()));
+            boolean success = update().setSql("liked = liked + 1").eq("id", id).update();
+            if (!success) {
+                throw new IllegalStateException("更新点赞数量失败");
+            }
+            stringRedisTemplate.opsForZSet().add(key, userIdStr, toEpochMilli(now));
             return Result.ok("点赞成功");
         }
-
-        boolean success = update().setSql("liked = liked + 1").eq("id", id).update();
-        if (!success) {
-            throw new IllegalStateException("更新点赞数量失败");
-        }
-        stringRedisTemplate.opsForZSet().add(key, userIdStr, toEpochMilli(now));
-        return Result.ok("点赞成功");
     }
 
     @Override
