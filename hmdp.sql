@@ -44,6 +44,21 @@ INSERT INTO `tb_blog` VALUES (6, 10, 1, '杭州周末好去处｜💰50就可以
 INSERT INTO `tb_blog` VALUES (7, 10, 1, '杭州周末好去处｜💰50就可以骑马啦🐎', '/imgs/blogs/blog1.jpg', '杭州周末好去处｜💰50就可以骑马啦🐎', 1, 0, '2022-01-11 16:05:47', '2022-03-10 09:21:42');
 
 -- ----------------------------
+-- Table structure for tb_blog_like
+-- ----------------------------
+DROP TABLE IF EXISTS `tb_blog_like`;
+CREATE TABLE `tb_blog_like`  (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `blog_id` bigint(20) UNSIGNED NOT NULL COMMENT '博客ID',
+  `user_id` bigint(20) UNSIGNED NOT NULL COMMENT '点赞用户ID',
+  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `uk_blog_user`(`blog_id`, `user_id`) USING BTREE,
+  INDEX `idx_blog_time`(`blog_id`, `create_time`) USING BTREE,
+  INDEX `idx_user`(`user_id`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact;
+
+-- ----------------------------
 -- Table structure for tb_blog_comments
 -- ----------------------------
 DROP TABLE IF EXISTS `tb_blog_comments`;
