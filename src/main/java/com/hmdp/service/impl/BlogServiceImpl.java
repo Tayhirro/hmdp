@@ -134,7 +134,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         int pageSize = (size == null || size <= 0) ? 20 : Math.min(size, 100);
         String key = BLOG_LIKED_KEY + id;
         Set<String> userIdSet = stringRedisTemplate.opsForZSet().reverseRange(key, from, from + pageSize - 1);
-        if (userIdSet == null || userIdSet.isEmpty()) {
+        if (userIdSet == null || userIdSet.isEmpty()) { //userIdSet 为空情况
             Map<String, Object> data = new HashMap<>();
             data.put("list", Collections.emptyList());
             data.put("nextOffset", from);
