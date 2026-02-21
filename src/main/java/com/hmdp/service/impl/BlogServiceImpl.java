@@ -78,7 +78,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         String key = BLOG_LIKED_KEY + id;
         Double score = stringRedisTemplate.opsForZSet().score(key, userIdStr);
         boolean isLiked = score != null;
-
+        // 存入数据库 
         if (!isLiked) {
             BlogLike likeRecord = queryLikeRecordFromDb(id, userId);
             if (likeRecord != null) {
@@ -86,7 +86,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 stringRedisTemplate.opsForZSet().add(key, userIdStr, toEpochMilli(likeRecord.getCreateTime()));
             }
         }
-
         if (isLiked) {
             int deleted = blogLikeMapper.delete(new LambdaQueryWrapper<BlogLike>()
                     .eq(BlogLike::getBlogId, id)
