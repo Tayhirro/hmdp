@@ -14,4 +14,6 @@ import com.hmdp.entity.Blog;
  */
 public interface IBlogService extends IService<Blog> {
     Result likeBlog(Long id);
+
+    Result queryHotBlog(Integer current);
 }

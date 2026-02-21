@@ -124,7 +124,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             return Result.fail("目标用户不能为空");
         }
         Long myId = current.getId();
-        Set<Object> followIds = stringRedisTemplate.opsForSet().intersect(FOLLOW_KEY + myId, FOLLOW_KEY + userId);
+        Set<String> followIds = stringRedisTemplate.opsForSet().intersect(FOLLOW_KEY + myId, FOLLOW_KEY + userId);
         if (followIds == null || followIds.isEmpty()) {
             return Result.ok(Collections.emptyList());
         }
