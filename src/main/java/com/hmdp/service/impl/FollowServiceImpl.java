@@ -45,11 +45,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Override
     public Result follow(Long followUserId, Boolean isFollow){
-        UserDTO user = UserHolder.getUser();
-        if (user == null || user.getId() == null) {
-            return Result.fail("用户未登录");
-        }
-        Long userId = user.getId();
+        Long userId = UserHolder.getUser().getId();
         if (followUserId == null) {
             return Result.fail("目标用户不能为空");
         }
@@ -116,14 +112,10 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Override
     public Result followCommons(Long userId){
-        UserDTO current = UserHolder.getUser();
-        if (current == null || current.getId() == null) {
-            return Result.fail("用户未登录");
-        }
         if (userId == null) {
             return Result.fail("目标用户不能为空");
         }
-        Long myId = current.getId();
+        Long myId = UserHolder.getUser().getId();
         Set<String> followIds = stringRedisTemplate.opsForSet().intersect(FOLLOW_KEY + myId, FOLLOW_KEY + userId);
         if (followIds == null || followIds.isEmpty()) {
             return Result.ok(Collections.emptyList());
@@ -137,14 +129,10 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Override 
     public Result isFollow(Long followUserId){
-        UserDTO current = UserHolder.getUser();
-        if (current == null || current.getId() == null) {
-            return Result.fail("用户未登录");
-        }
         if (followUserId == null) {
             return Result.fail("目标用户不能为空");
         }
-        Long selfId = current.getId();
+        Long selfId = UserHolder.getUser().getId();
         // 先查询redis
         Boolean isFollow = stringRedisTemplate.opsForSet().isMember(FOLLOW_KEY + selfId, followUserId.toString());
         if (Boolean.TRUE.equals(isFollow)) {

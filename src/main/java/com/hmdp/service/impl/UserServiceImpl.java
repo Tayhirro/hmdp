@@ -237,9 +237,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result changeInfo(Long userId, UserInfo info) {
-        if (userId == null) {
-            return Result.fail("用户未登录");
-        }
         if (info == null) {
             return Result.fail("请求参数不能为空");
         }

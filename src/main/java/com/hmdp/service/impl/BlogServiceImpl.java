@@ -77,7 +77,19 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     }
     @Override
     public Result saveBlog(Blog blog) {
-        
+        Long userId = UserHolder.getUser().getId();
+        blog.setUserId(userId);
+        save(blog);
+        List<User> fans = userService.query().eq("follow_user_id", blog.getUserId()).list();
+        if (fans == null || fans.isEmpty()) {
+            return Result.ok(blog.getId());
+        }
+
+    // 循环推送到每个粉丝的feed ZSet
+        fans.forEach(fan -> {
+            stringRedisTemplate.opsForZSet().add(FEED_KEY + fan.getId(), blog.getId().toString(), System.currentTimeMillis());
+        });
+        return Result.ok(blog.getId());
     }
 
     @Override
@@ -171,14 +183,11 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     // 查询我关注的博主的博客 
     @Override 
     public Result queryBlogOfFollow(Long max, Integer offset) {
-        UserDTO currentUser = UserHolder.getUser();
-        if (currentUser == null || currentUser.getId() == null) {
-            return Result.fail("用户未登录");
-        }
+        Long userId = UserHolder.getUser().getId();
         long maxScore = (max == null || max <= 0) ? Long.MAX_VALUE : max;
         int os = (offset == null || offset < 0) ? 0 : offset;
 
-        String key = FEED_KEY + currentUser.getId();
+        String key = FEED_KEY + userId;
         Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
                 .reverseRangeByScoreWithScores(key, 0, maxScore, os, SystemConstants.DEFAULT_PAGE_SIZE);
         if (typedTuples == null || typedTuples.isEmpty()) {
