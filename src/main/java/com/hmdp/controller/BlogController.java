@@ -61,8 +61,12 @@ public class BlogController {
      * 查询博客点赞用户列表（待你在 service 层补充完整实现）
      */
     @GetMapping("/likes/{id}")
-    public Result queryBlogLikes(@PathVariable("id") Long id) {
-        return Result.fail("TODO: 请在 BlogServiceImpl 中实现点赞列表逻辑");
+    public Result queryBlogLikes(
+            @PathVariable("id") Long id,
+            @RequestParam(value = "offset", defaultValue = "0") Integer offset,
+            @RequestParam(value = "size", defaultValue = "20") Integer size
+    ) {
+        return blogService.queryBlogLikes(id, offset, size);
     }
 
     /**
@@ -73,7 +77,7 @@ public class BlogController {
             @RequestParam("lastId") Long max,
             @RequestParam(value = "offset", defaultValue = "0") Integer offset
     ) {
-        return Result.fail("TODO: 请在 BlogServiceImpl 中实现关注流逻辑");
+        return blogService.queryBlogOfFollow(max, offset);
     }
 
     @GetMapping("/of/me")

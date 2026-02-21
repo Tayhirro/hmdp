@@ -14,6 +14,7 @@ import com.hmdp.service.strategy.BlogRankStrategy;
 import com.hmdp.service.strategy.BlogRankStrategyRouter;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
+import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -21,7 +22,11 @@ import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY;
 
@@ -121,14 +126,43 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
 
     @Override
-    public Result queryBlogLikes(Long id) {
-        return Result.ok(stringRedisTemplate.opsForZSet().range(BLOG_LIKED_KEY + id, 0, 9));
+    public Result queryBlogLikes(Long id, Integer offset, Integer size) {
+        if (id == null) {
+            return Result.fail("博客ID不能为空");
+        }
+        int from = (offset == null || offset < 0) ? 0 : offset;
+        int pageSize = (size == null || size <= 0) ? 20 : Math.min(size, 100);
+        String key = BLOG_LIKED_KEY + id;
+        Set<String> userIdSet = stringRedisTemplate.opsForZSet().reverseRange(key, from, from + pageSize - 1);
+        if (userIdSet == null || userIdSet.isEmpty()) {
+            Map<String, Object> data = new HashMap<>();
+            data.put("list", Collections.emptyList());
+            data.put("nextOffset", from);
+            data.put("hasMore", false);
+            return Result.ok(data);
+        }
+
+        List<Long> userIds = userIdSet.stream().map(Long::valueOf).collect(Collectors.toList());
+        String idStr = StrUtil.join(",", userIds);
+        List<User> users = userService.query()
+                .in("id", userIds)
+                .last("ORDER BY FIELD(id," + idStr + ")")
+                .list();
+        List<UserDTO> dtoList = users.stream()
+                .map(user -> BeanUtil.copyProperties(user, UserDTO.class))
+                .collect(Collectors.toList());
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("list", dtoList);
+        data.put("nextOffset", from + userIds.size());
+        data.put("hasMore", userIds.size() == pageSize);
+        return Result.ok(data);
     }
 
     // 查询我关注的博主的博客 
     @Override 
     public Result queryBlogOfFollow(Long max, Integer offset) {
-        
+        return Result.fail("TODO: queryBlogOfFollow 未实现");
     }
 
 }
