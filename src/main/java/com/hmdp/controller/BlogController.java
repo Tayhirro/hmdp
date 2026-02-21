@@ -34,9 +34,7 @@ public class BlogController {
         UserDTO user = UserHolder.getUser();
         blog.setUserId(user.getId());
         // 保存探店博文
-        blogService.save(blog);
-        // 返回id
-        return Result.ok(blog.getId());
+        return blogService.save(blog);
     }
 
     @PutMapping("/like/{id}")
