@@ -3,6 +3,7 @@ package com.hmdp.service.impl;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
 import com.hmdp.entity.User;
@@ -17,10 +18,12 @@ import com.hmdp.utils.UserHolder;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -29,6 +32,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY;
+import static com.hmdp.utils.RedisConstants.FEED_KEY;
 
 /**
  * <p>
@@ -163,7 +167,61 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     // 查询我关注的博主的博客 
     @Override 
     public Result queryBlogOfFollow(Long max, Integer offset) {
-        return Result.fail("TODO: queryBlogOfFollow 未实现");
+        UserDTO currentUser = UserHolder.getUser();
+        if (currentUser == null || currentUser.getId() == null) {
+            return Result.fail("用户未登录");
+        }
+        long maxScore = (max == null || max <= 0) ? Long.MAX_VALUE : max;
+        int os = (offset == null || offset < 0) ? 0 : offset;
+
+        String key = FEED_KEY + currentUser.getId();
+        Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
+                .reverseRangeByScoreWithScores(key, 0, maxScore, os, SystemConstants.DEFAULT_PAGE_SIZE);
+        if (typedTuples == null || typedTuples.isEmpty()) {
+            ScrollResult empty = new ScrollResult();
+            empty.setList(Collections.emptyList());
+            empty.setMinTime(maxScore);
+            empty.setOffset(os);
+            return Result.ok(empty);
+        }
+
+        List<Long> ids = new ArrayList<>(typedTuples.size());
+        long minTime = 0L;
+        int nextOffset = 1;
+        for (ZSetOperations.TypedTuple<String> tuple : typedTuples) {
+            String blogIdStr = tuple.getValue();
+            if (blogIdStr == null) {
+                continue;
+            }
+            ids.add(Long.valueOf(blogIdStr));
+            long time = tuple.getScore() == null ? 0L : tuple.getScore().longValue();
+            if (time == minTime) {
+                nextOffset++;
+            } else {
+                minTime = time;
+                nextOffset = 1;
+            }
+        }
+        if (ids.isEmpty()) {
+            ScrollResult empty = new ScrollResult();
+            empty.setList(Collections.emptyList());
+            empty.setMinTime(maxScore);
+            empty.setOffset(os);
+            return Result.ok(empty);
+        }
+
+        String idStr = StrUtil.join(",", ids);
+        List<Blog> blogs = query().in("id", ids).last("ORDER BY FIELD(id," + idStr + ")").list();
+        blogs.forEach(blog -> {
+            fillBlogUser(blog);
+            fillBlogLikedFlag(blog);
+        });
+
+        ScrollResult result = new ScrollResult();
+        result.setList(blogs);
+        result.setMinTime(minTime);
+        result.setOffset(nextOffset);
+        return Result.ok(result);
     }
 
 }
