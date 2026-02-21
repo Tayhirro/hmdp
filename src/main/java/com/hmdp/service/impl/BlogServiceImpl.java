@@ -11,6 +11,7 @@ import com.hmdp.service.IBlogService;
 import com.hmdp.service.IUserService;
 import com.hmdp.service.strategy.BlogQueryContext;
 import com.hmdp.service.strategy.BlogRankStrategy;
+import com.hmdp.service.strategy.BlogRankStrategyRouter;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
 import cn.hutool.core.util.StrUtil;
@@ -21,10 +22,6 @@ import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY;
 
@@ -46,7 +43,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     private IUserService userService;
 
     @Resource
-    private List<BlogRankStrategy> blogRankStrategies;
+    private BlogRankStrategyRouter strategyRouter;
 
     @Override
     public Result likeBlog(Long id){
@@ -72,14 +69,10 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Override
     public Result queryHotBlog(Integer current) {
-        Map<String, BlogRankStrategy> strategyMap = blogRankStrategies.stream()
-                .filter(Objects::nonNull)
-                .collect(Collectors.toMap(BlogRankStrategy::scene, Function.identity(), (a, b) -> a));
-        BlogRankStrategy hotStrategy = strategyMap.get("hot");
+        BlogRankStrategy hotStrategy = strategyRouter.get("hot");
         if (hotStrategy == null) {
             return Result.fail("热门策略未配置");
         }
-
         BlogQueryContext ctx = new BlogQueryContext();
         ctx.setScene("hot");
         ctx.setCurrent(current);
