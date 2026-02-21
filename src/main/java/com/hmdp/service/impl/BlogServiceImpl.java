@@ -169,8 +169,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             data.put("hasMore", false);
             return Result.ok(data);
         }
-
         List<Long> userIds = new ArrayList<>(userIdSet.size());
+
+        // 
         long minTime = -1L;
         int nextOffset = 0;
         for (ZSetOperations.TypedTuple<String> tuple : userIdSet) {
