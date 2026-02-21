@@ -3,4 +3,5 @@ package com.hmdp.service.strategy;
 public interface BlogRankStrategy {
     String scene();
     Page<Long> rank(BlockQueryContext ctx);
+
 }
