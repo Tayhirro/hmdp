@@ -109,6 +109,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         blog.setName(user.getNickName());
         blog.setIcon(user.getIcon());
     }
+
     private void fillBlogLikedFlag(Blog blog) {
         UserDTO user = UserHolder.getUser();
         if (user == null || user.getId() == null) {
