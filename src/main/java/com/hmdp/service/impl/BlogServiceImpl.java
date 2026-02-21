@@ -25,9 +25,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -56,7 +53,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Autowired
     private IUserService userService;
-
     @Autowired
     private IFollowService followService;
 
@@ -88,15 +84,11 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     public Result saveBlog(Blog blog) {
         Long userId = UserHolder.getUser().getId();
         blog.setUserId(userId);
-        boolean saved = save(blog);
-        if (!saved) {
-            return Result.fail("发布笔记失败");
-        }
+        save(blog);
         List<Follow> follows = followService.query().eq("follow_user_id", userId).list();
         if (follows == null || follows.isEmpty()) {
             return Result.ok(blog.getId());
         }
-
     // 循环推送到每个粉丝的feed ZSet
         follows.forEach(follow -> {
             stringRedisTemplate.opsForZSet().add(FEED_KEY + follow.getUserId(), blog.getId().toString(), System.currentTimeMillis());
@@ -158,23 +150,52 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
 
     @Override
-    public Result queryBlogLikes(Long id, Integer offset) {
+    public Result queryBlogLikes(Long id,Long max, Integer offset) {
         if (id == null) {
             return Result.fail("博客ID不能为空");
         }
         int from = (offset == null || offset < 0) ? 0 : offset;
+        long maxScore = (max == null || max <= 0) ? Long.MAX_VALUE : max;
         int pageSize = SystemConstants.DEFAULT_PAGE_SIZE;
         String key = BLOG_LIKED_KEY + id;
-        Set<String> userIdSet = stringRedisTemplate.opsForZSet().reverseRange(key, from, from + pageSize - 1);
+        Set<ZSetOperations.TypedTuple<String>> userIdSet = stringRedisTemplate.opsForZSet()
+                .reverseRangeByScoreWithScores(key, 0, maxScore, from, pageSize);
         if (userIdSet == null || userIdSet.isEmpty()) { //userIdSet 为空情况
             Map<String, Object> data = new HashMap<>();
             data.put("list", Collections.emptyList());
+            data.put("minTime", maxScore);
             data.put("nextOffset", from);
+            data.put("offset", from);
             data.put("hasMore", false);
             return Result.ok(data);
         }
 
-        List<Long> userIds = userIdSet.stream().map(Long::valueOf).collect(Collectors.toList());
+        List<Long> userIds = new ArrayList<>(userIdSet.size());
+        long minTime = -1L;
+        int nextOffset = 0;
+        for (ZSetOperations.TypedTuple<String> tuple : userIdSet) {
+            String userIdStr = tuple.getValue();
+            if (userIdStr == null) {
+                continue;
+            }
+            userIds.add(Long.valueOf(userIdStr));
+            long time = tuple.getScore() == null ? 0L : tuple.getScore().longValue();
+            if (time == minTime) {
+                nextOffset++;
+            } else {
+                minTime = time;
+                nextOffset = 1;
+            }
+        }
+        if (userIds.isEmpty()) {
+            Map<String, Object> data = new HashMap<>();
+            data.put("list", Collections.emptyList());
+            data.put("minTime", maxScore);
+            data.put("nextOffset", from);
+            data.put("offset", from);
+            data.put("hasMore", false);
+            return Result.ok(data);
+        }
         String idStr = StrUtil.join(",", userIds);
         
         // 根据id 查 users
@@ -187,8 +208,10 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 .collect(Collectors.toList());
         Map<String, Object> data = new HashMap<>();
         data.put("list", dtoList);
-        data.put("nextOffset", from + userIds.size());
-        data.put("hasMore", userIds.size() == pageSize);
+        data.put("minTime", minTime);
+        data.put("nextOffset", nextOffset);
+        data.put("offset", nextOffset);
+        data.put("hasMore", userIdSet.size() == pageSize);
         return Result.ok(data);
     }
 
@@ -200,10 +223,17 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         int os = (offset == null || offset < 0) ? 0 : offset;
 
         String key = FEED_KEY + userId;
+
+        List<ZSetOperations.TypedTuple<String>> pushed = readInbox(FEED_KEY + userId , max , offset, pageSize);
+
         Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
                 .reverseRangeByScoreWithScores(key, 0, maxScore, os, SystemConstants.DEFAULT_PAGE_SIZE);
         if (typedTuples == null || typedTuples.isEmpty()) {
-            return queryBlogOfFollowFallback(userId, maxScore, os, key);
+            ScrollResult empty = new ScrollResult();
+            empty.setList(Collections.emptyList());
+            empty.setMinTime(maxScore);
+            empty.setOffset(os);
+            return Result.ok(empty);
         }
 
         List<Long> ids = new ArrayList<>(typedTuples.size());
@@ -243,68 +273,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         result.setMinTime(minTime);
         result.setOffset(nextOffset);
         return Result.ok(result);
-    }
-
-    private Result queryBlogOfFollowFallback(Long userId, long maxScore, int offset, String feedKey) {
-        List<Follow> follows = followService.query().eq("user_id", userId).list();
-        if (follows == null || follows.isEmpty()) {
-            return Result.ok(buildEmptyScrollResult(maxScore, offset));
-        }
-        List<Long> followUserIds = follows.stream().map(Follow::getFollowUserId).collect(Collectors.toList());
-        if (followUserIds.isEmpty()) {
-            return Result.ok(buildEmptyScrollResult(maxScore, offset));
-        }
-
-        LocalDateTime maxTime = maxScore == Long.MAX_VALUE
-                ? null
-                : LocalDateTime.ofInstant(Instant.ofEpochMilli(maxScore), ZoneId.systemDefault());
-
-        var blogQuery = query().in("user_id", followUserIds);
-        if (maxTime != null) {
-            blogQuery.le("create_time", maxTime);
-        }
-        List<Blog> blogs = blogQuery.orderByDesc("create_time")
-                .last("LIMIT " + offset + "," + SystemConstants.DEFAULT_PAGE_SIZE)
-                .list();
-        if (blogs == null || blogs.isEmpty()) {
-            return Result.ok(buildEmptyScrollResult(maxScore, offset));
-        }
-
-        blogs.forEach(blog -> {
-            fillBlogUser(blog);
-            fillBlogLikedFlag(blog);
-            long score = blog.getCreateTime() == null
-                    ? System.currentTimeMillis()
-                    : blog.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
-            stringRedisTemplate.opsForZSet().add(feedKey, blog.getId().toString(), score);
-        });
-
-        long minTime = 0L;
-        int nextOffset = 1;
-        for (Blog blog : blogs) {
-            long time = blog.getCreateTime() == null
-                    ? 0L
-                    : blog.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
-            if (time == minTime) {
-                nextOffset++;
-            } else {
-                minTime = time;
-                nextOffset = 1;
-            }
-        }
-        ScrollResult result = new ScrollResult();
-        result.setList(blogs);
-        result.setMinTime(minTime);
-        result.setOffset(nextOffset);
-        return Result.ok(result);
-    }
-
-    private ScrollResult buildEmptyScrollResult(long maxScore, int offset) {
-        ScrollResult empty = new ScrollResult();
-        empty.setList(Collections.emptyList());
-        empty.setMinTime(maxScore);
-        empty.setOffset(offset);
-        return empty;
     }
 
 }
