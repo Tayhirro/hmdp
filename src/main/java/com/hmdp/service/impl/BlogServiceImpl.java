@@ -254,15 +254,15 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
         List<UserDTO> dtoList = hydrateLikeUsers(userIds);
         long minTime = -1L;
-        int nextOffset = 0;
-        for (Long score : scoreList) {
-            if (score == minTime) {
-                nextOffset++;
+        int sameCount = 0;
+        for (int i = scoreList.size() - 1; i >= 0; i--) {
+            if (scoreList.get(i).equals(minTime)) {
+                sameCount++;
             } else {
-                minTime = score;
-                nextOffset = 1;
+                break;
             }
         }
+        int nextOffset = (minTime == maxScore ? from : 0) + sameCount;  // min + offset 分情况
 
         Map<String, Object> data = new HashMap<>(8);
         data.put("list", dtoList);
