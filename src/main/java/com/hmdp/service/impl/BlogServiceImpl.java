@@ -6,9 +6,11 @@ import com.hmdp.dto.Result;
 import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
+import com.hmdp.entity.Follow;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.service.IBlogService;
+import com.hmdp.service.IFollowService;
 import com.hmdp.service.IUserService;
 import com.hmdp.service.strategy.BlogQueryContext;
 import com.hmdp.service.strategy.BlogRankStrategy;
@@ -23,6 +25,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -48,8 +53,12 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
 
+
     @Autowired
     private IUserService userService;
+
+    @Autowired
+    private IFollowService followService;
 
     @Resource
     private BlogRankStrategyRouter strategyRouter;
@@ -79,15 +88,18 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     public Result saveBlog(Blog blog) {
         Long userId = UserHolder.getUser().getId();
         blog.setUserId(userId);
-        save(blog);
-        List<User> fans = userService.query().eq("follow_user_id", blog.getUserId()).list();
-        if (fans == null || fans.isEmpty()) {
+        boolean saved = save(blog);
+        if (!saved) {
+            return Result.fail("发布笔记失败");
+        }
+        List<Follow> follows = followService.query().eq("follow_user_id", userId).list();
+        if (follows == null || follows.isEmpty()) {
             return Result.ok(blog.getId());
         }
 
     // 循环推送到每个粉丝的feed ZSet
-        fans.forEach(fan -> {
-            stringRedisTemplate.opsForZSet().add(FEED_KEY + fan.getId(), blog.getId().toString(), System.currentTimeMillis());
+        follows.forEach(follow -> {
+            stringRedisTemplate.opsForZSet().add(FEED_KEY + follow.getUserId(), blog.getId().toString(), System.currentTimeMillis());
         });
         return Result.ok(blog.getId());
     }
@@ -191,11 +203,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
                 .reverseRangeByScoreWithScores(key, 0, maxScore, os, SystemConstants.DEFAULT_PAGE_SIZE);
         if (typedTuples == null || typedTuples.isEmpty()) {
-            ScrollResult empty = new ScrollResult();
-            empty.setList(Collections.emptyList());
-            empty.setMinTime(maxScore);
-            empty.setOffset(os);
-            return Result.ok(empty);
+            return queryBlogOfFollowFallback(userId, maxScore, os, key);
         }
 
         List<Long> ids = new ArrayList<>(typedTuples.size());
@@ -235,6 +243,68 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         result.setMinTime(minTime);
         result.setOffset(nextOffset);
         return Result.ok(result);
+    }
+
+    private Result queryBlogOfFollowFallback(Long userId, long maxScore, int offset, String feedKey) {
+        List<Follow> follows = followService.query().eq("user_id", userId).list();
+        if (follows == null || follows.isEmpty()) {
+            return Result.ok(buildEmptyScrollResult(maxScore, offset));
+        }
+        List<Long> followUserIds = follows.stream().map(Follow::getFollowUserId).collect(Collectors.toList());
+        if (followUserIds.isEmpty()) {
+            return Result.ok(buildEmptyScrollResult(maxScore, offset));
+        }
+
+        LocalDateTime maxTime = maxScore == Long.MAX_VALUE
+                ? null
+                : LocalDateTime.ofInstant(Instant.ofEpochMilli(maxScore), ZoneId.systemDefault());
+
+        var blogQuery = query().in("user_id", followUserIds);
+        if (maxTime != null) {
+            blogQuery.le("create_time", maxTime);
+        }
+        List<Blog> blogs = blogQuery.orderByDesc("create_time")
+                .last("LIMIT " + offset + "," + SystemConstants.DEFAULT_PAGE_SIZE)
+                .list();
+        if (blogs == null || blogs.isEmpty()) {
+            return Result.ok(buildEmptyScrollResult(maxScore, offset));
+        }
+
+        blogs.forEach(blog -> {
+            fillBlogUser(blog);
+            fillBlogLikedFlag(blog);
+            long score = blog.getCreateTime() == null
+                    ? System.currentTimeMillis()
+                    : blog.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            stringRedisTemplate.opsForZSet().add(feedKey, blog.getId().toString(), score);
+        });
+
+        long minTime = 0L;
+        int nextOffset = 1;
+        for (Blog blog : blogs) {
+            long time = blog.getCreateTime() == null
+                    ? 0L
+                    : blog.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            if (time == minTime) {
+                nextOffset++;
+            } else {
+                minTime = time;
+                nextOffset = 1;
+            }
+        }
+        ScrollResult result = new ScrollResult();
+        result.setList(blogs);
+        result.setMinTime(minTime);
+        result.setOffset(nextOffset);
+        return Result.ok(result);
+    }
+
+    private ScrollResult buildEmptyScrollResult(long maxScore, int offset) {
+        ScrollResult empty = new ScrollResult();
+        empty.setList(Collections.emptyList());
+        empty.setMinTime(maxScore);
+        empty.setOffset(offset);
+        return empty;
     }
 
 }
