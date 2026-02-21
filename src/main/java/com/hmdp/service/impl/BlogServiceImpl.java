@@ -144,6 +144,8 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
         List<Long> userIds = userIdSet.stream().map(Long::valueOf).collect(Collectors.toList());
         String idStr = StrUtil.join(",", userIds);
+        
+        // 根据id 查 users
         List<User> users = userService.query()
                 .in("id", userIds)
                 .last("ORDER BY FIELD(id," + idStr + ")")
@@ -151,7 +153,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         List<UserDTO> dtoList = users.stream()
                 .map(user -> BeanUtil.copyProperties(user, UserDTO.class))
                 .collect(Collectors.toList());
-
         Map<String, Object> data = new HashMap<>();
         data.put("list", dtoList);
         data.put("nextOffset", from + userIds.size());
