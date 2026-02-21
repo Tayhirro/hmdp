@@ -268,7 +268,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         data.put("list", dtoList);
         data.put("minTime", minTime);
         data.put("nextOffset", nextOffset);
-        data.put("offset", nextOffset);
         data.put("hasMore", scoreList.size() == pageSize);
         return Result.ok(data);
     }
