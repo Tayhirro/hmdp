@@ -75,6 +75,10 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             return Result.ok("取消点赞成功");
         }
     }
+    @Override
+    public Result saveBlog(Blog blog) {
+        
+    }
 
     @Override
     public Result queryHotBlog(Integer current) {
@@ -90,7 +94,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         if (currentUser != null) {
             ctx.setUserId(currentUser.getId());
         }
-        // page 排序逻辑
+        // page 排序逻辑 -- 推荐系统排序
         Page<Long> idPage = hotStrategy.rank(ctx);
         List<Long> ids = idPage.getRecords();
         if (ids == null || ids.isEmpty()) {
@@ -130,12 +134,12 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
 
     @Override
-    public Result queryBlogLikes(Long id, Integer offset, Integer size) {
+    public Result queryBlogLikes(Long id, Integer offset) {
         if (id == null) {
             return Result.fail("博客ID不能为空");
         }
         int from = (offset == null || offset < 0) ? 0 : offset;
-        int pageSize = (size == null || size <= 0) ? 20 : Math.min(size, 100);
+        int pageSize = SystemConstants.DEFAULT_PAGE_SIZE;
         String key = BLOG_LIKED_KEY + id;
         Set<String> userIdSet = stringRedisTemplate.opsForZSet().reverseRange(key, from, from + pageSize - 1);
         if (userIdSet == null || userIdSet.isEmpty()) { //userIdSet 为空情况

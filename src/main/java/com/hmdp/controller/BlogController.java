@@ -63,10 +63,9 @@ public class BlogController {
     @GetMapping("/likes/{id}")
     public Result queryBlogLikes(
             @PathVariable("id") Long id,
-            @RequestParam(value = "offset", defaultValue = "0") Integer offset,
-            @RequestParam(value = "size", defaultValue = "20") Integer size
+            @RequestParam(value = "offset", defaultValue = "0") Integer offset
     ) {
-        return blogService.queryBlogLikes(id, offset, size);
+        return blogService.queryBlogLikes(id, offset);
     }
 
     /**

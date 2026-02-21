@@ -14,7 +14,7 @@ import com.hmdp.entity.Blog;
  */
 public interface IBlogService extends IService<Blog> {
     Result likeBlog(Long id);   // user: 点赞 blog
-    Result queryBlogLikes(Long id); // user: 查询 blog的 likes数量
+    Result queryBlogLikes(Long id, Integer offset); // user: 分页查询 blog 点赞用户
     Result queryBlogOfFollow(Long max, Integer offset); // user: 查询关注的blog
     Result queryHotBlog(Integer current); // user: 查询热门blog
     
