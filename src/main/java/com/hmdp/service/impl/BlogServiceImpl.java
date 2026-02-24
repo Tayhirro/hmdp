@@ -273,8 +273,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         return Result.ok(data);
     }
 
-    // 查询我关注的博主的博客
-    // 查询feedZSet --->  获取blogID 
+    // 查询我关注的博主的博客 查询inbox --->转换 blog
     @Override
     public Result queryBlogOfFollow(Long max, Integer offset) {
         Long userId = UserHolder.getUser().getId();
@@ -340,19 +339,20 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     }
 
     private List<BlogLike> queryLikesFromDb(Long blogId, long maxScore, int offset, int pageSize) {
-        if (maxScore == Long.MAX_VALUE) {
-            return blogLikeMapper.selectList(new LambdaQueryWrapper<BlogLike>()
-                    .select(BlogLike::getId, BlogLike::getUserId, BlogLike::getCreateTime)
-                    .eq(BlogLike::getBlogId, blogId)
-                    .orderByDesc(BlogLike::getCreateTime, BlogLike::getId)
-                    .last("LIMIT " + pageSize));
-        }   //选择最后pagesize条数据
-        LocalDateTime maxTime = toLocalDateTime(maxScore); 
-        List<BlogLike> result = new ArrayList<>(pageSize);
+        LambdaQueryWrapper<BlogLike> wrapper = new LambdaQueryWrapper<BlogLike>()
+                .select(BlogLike::getId, BlogLike::getUserId, BlogLike::getCreateTime)
+                .eq(BlogLike::getBlogId, blogId)
+                .orderByDesc(BlogLike::getCreateTime, BlogLike::getId);
 
+        if (maxScore < Long.MAX_VALUE) {
+            wrapper.le(BlogLike::getCreateTime, toLocalDateTime(maxScore));
+        }
 
-        wrapper.orderByDesc(BlogLike::getCreateTime, BlogLike::getId)
-                .last("LIMIT " + offset + "," + pageSize);
+        if (offset > 0) {
+            wrapper.last("LIMIT " + offset + "," + pageSize);
+        } else {
+            wrapper.last("LIMIT " + pageSize);
+        }
         return blogLikeMapper.selectList(wrapper);
     }
 
