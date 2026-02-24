@@ -293,8 +293,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         }
 
         List<Long> ids = new ArrayList<>(typedTuples.size());
-        long minTime = 0L;
-        int nextOffset = 1;
+        List<Long> scoreList = new ArrayList<>(typedTuples.size());
         for (ZSetOperations.TypedTuple<String> tuple : typedTuples) {
             String blogIdStr = tuple.getValue();
             if (blogIdStr == null) {
@@ -302,12 +301,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             }
             ids.add(Long.valueOf(blogIdStr));
             long time = tuple.getScore() == null ? 0L : tuple.getScore().longValue();
-            if (time == minTime) {
-                nextOffset++;
-            } else {
-                minTime = time;
-                nextOffset = 1;
-            }
+            scoreList.add(time);
         }
         if (ids.isEmpty()) {
             ScrollResult empty = new ScrollResult();
@@ -316,6 +310,16 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             empty.setOffset(os);
             return Result.ok(empty);
         }
+        long minTime = scoreList.get(scoreList.size() - 1);
+        int sameCount = 0;
+        for (int i = scoreList.size() - 1; i >= 0; i--) {
+            if (scoreList.get(i).equals(minTime)) {
+                sameCount++;
+            } else {
+                break;
+            }
+        }
+        int nextOffset = (minTime == maxScore ? os : 0) + sameCount;
 
         String idStr = StrUtil.join(",", ids);
         List<Blog> blogs = query().in("id", ids).last("ORDER BY FIELD(id," + idStr + ")").list();
