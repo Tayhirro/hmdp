@@ -274,6 +274,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     }
 
     // 查询我关注的博主的博客
+    // 查询feedZSet --->  获取blogID 
     @Override
     public Result queryBlogOfFollow(Long max, Integer offset) {
         Long userId = UserHolder.getUser().getId();
