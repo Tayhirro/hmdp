@@ -254,7 +254,8 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         }
 
         List<UserDTO> dtoList = hydrateLikeUsers(userIds);
-        long minTime = -1L;
+        //倒叙获取scoreList
+        long minTime =  scoreList.get(scoreList.size() - 1); 
         int sameCount = 0;
         for (int i = scoreList.size() - 1; i >= 0; i--) {
             if (scoreList.get(i).equals(minTime)) {
@@ -339,21 +340,36 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     }
 
     private List<BlogLike> queryLikesFromDb(Long blogId, long maxScore, int offset, int pageSize) {
-        LambdaQueryWrapper<BlogLike> wrapper = new LambdaQueryWrapper<BlogLike>()
+        if (maxScore == Long.MAX_VALUE) {
+            return blogLikeMapper.selectList(new LambdaQueryWrapper<BlogLike>()
+                    .select(BlogLike::getId, BlogLike::getUserId, BlogLike::getCreateTime)
+                    .eq(BlogLike::getBlogId, blogId)
+                    .orderByDesc(BlogLike::getCreateTime, BlogLike::getId)
+                    .last("LIMIT " + pageSize));
+        }
+
+        LocalDateTime maxTime = toLocalDateTime(maxScore);
+        List<BlogLike> result = new ArrayList<>(pageSize);
+
+        List<BlogLike> sameTime = blogLikeMapper.selectList(new LambdaQueryWrapper<BlogLike>()
                 .select(BlogLike::getId, BlogLike::getUserId, BlogLike::getCreateTime)
                 .eq(BlogLike::getBlogId, blogId)
-                .orderByDesc(BlogLike::getCreateTime, BlogLike::getId);
+                .eq(BlogLike::getCreateTime, maxTime)
+                .orderByDesc(BlogLike::getId)
+                .last("LIMIT " + offset + "," + pageSize));
+        result.addAll(sameTime);
 
-        if (maxScore < Long.MAX_VALUE) {
-            wrapper.le(BlogLike::getCreateTime, toLocalDateTime(maxScore));
+        int remain = pageSize - result.size();  // 如果 remain 还有剩余 则直接 查后续的
+        if (remain > 0) {
+            List<BlogLike> older = blogLikeMapper.selectList(new LambdaQueryWrapper<BlogLike>()
+                    .select(BlogLike::getId, BlogLike::getUserId, BlogLike::getCreateTime)
+                    .eq(BlogLike::getBlogId, blogId)
+                    .lt(BlogLike::getCreateTime, maxTime)
+                    .orderByDesc(BlogLike::getCreateTime, BlogLike::getId)
+                    .last("LIMIT " + remain));
+            result.addAll(older);
         }
-
-        if (offset > 0) {
-            wrapper.last("LIMIT " + offset + "," + pageSize);
-        } else {
-            wrapper.last("LIMIT " + pageSize);
-        }
-        return blogLikeMapper.selectList(wrapper);
+        return result;
     }
 
     private List<UserDTO> hydrateLikeUsers(List<Long> userIds) {
