@@ -205,6 +205,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Override
     public Result queryBlogLikes(Long id, Long max, Integer offset) {
+        // max 最大时间戳 offset 偏离max时间戳跳过多少 pagesize 需要数据多少
         if (id == null) {
             return Result.fail("博客ID不能为空");
         }
