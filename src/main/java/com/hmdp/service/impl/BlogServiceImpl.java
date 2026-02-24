@@ -220,7 +220,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         List<Long> userIds = new ArrayList<>(pageSize);
         List<Long> scoreList = new ArrayList<>(pageSize);
 
-        if (tupleSet != null && !tupleSet.isEmpty()) {
+        if (tupleSet != null && !tupleSet.isEmpty()) {   // 如果查到
             for (ZSetOperations.TypedTuple<String> tuple : tupleSet) {
                 String userIdStr = tuple.getValue();
                 if (userIdStr == null) {
@@ -233,7 +233,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 }
                 scoreList.add(tuple.getScore() == null ? 0L : tuple.getScore().longValue());
             }
-        } else {
+        } else {    //db 查询
             List<BlogLike> dbLikes = queryLikesFromDb(id, maxScore, from, pageSize);
             if (dbLikes.isEmpty()) {
                 return Result.ok(emptyLikesResult(maxScore, from));
