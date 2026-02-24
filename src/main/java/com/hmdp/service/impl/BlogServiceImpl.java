@@ -338,12 +338,17 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     }
 
     private List<BlogLike> queryLikesFromDb(Long blogId, long maxScore, int offset, int pageSize) {
-        LambdaQueryWrapper<BlogLike> wrapper = new LambdaQueryWrapper<BlogLike>()
-                .select(BlogLike::getId, BlogLike::getUserId, BlogLike::getCreateTime)
-                .eq(BlogLike::getBlogId, blogId);
-        if (maxScore < Long.MAX_VALUE) {
-            wrapper.le(BlogLike::getCreateTime, toLocalDateTime(maxScore));
-        }
+        if (maxScore == Long.MAX_VALUE) {
+            return blogLikeMapper.selectList(new LambdaQueryWrapper<BlogLike>()
+                    .select(BlogLike::getId, BlogLike::getUserId, BlogLike::getCreateTime)
+                    .eq(BlogLike::getBlogId, blogId)
+                    .orderByDesc(BlogLike::getCreateTime, BlogLike::getId)
+                    .last("LIMIT " + pageSize));
+        }   //选择最后pagesize条数据
+        LocalDateTime maxTime = toLocalDateTime(maxScore); 
+        List<BlogLike> result = new ArrayList<>(pageSize);
+
+
         wrapper.orderByDesc(BlogLike::getCreateTime, BlogLike::getId)
                 .last("LIMIT " + offset + "," + pageSize);
         return blogLikeMapper.selectList(wrapper);
