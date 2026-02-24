@@ -99,6 +99,22 @@ CREATE TABLE `tb_follow`  (
 -- ----------------------------
 
 -- ----------------------------
+-- Table structure for tb_feed_inbox
+-- ----------------------------
+DROP TABLE IF EXISTS `tb_feed_inbox`;
+CREATE TABLE `tb_feed_inbox`  (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `recipient_id` bigint(20) UNSIGNED NOT NULL COMMENT '收件人用户ID',
+  `blog_id` bigint(20) UNSIGNED NOT NULL COMMENT '博客ID',
+  `score` bigint(20) NOT NULL COMMENT '时间戳分数',
+  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `uk_recipient_blog`(`recipient_id`, `blog_id`) USING BTREE,
+  INDEX `idx_recipient_score`(`recipient_id`, `score`) USING BTREE,
+  INDEX `idx_blog`(`blog_id`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact;
+
+-- ----------------------------
 -- Table structure for tb_seckill_voucher
 -- ----------------------------
 DROP TABLE IF EXISTS `tb_seckill_voucher`;

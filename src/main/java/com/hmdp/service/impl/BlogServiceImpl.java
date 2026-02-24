@@ -10,10 +10,12 @@ import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
 import com.hmdp.entity.BlogLike;
+import com.hmdp.entity.FeedInbox;
 import com.hmdp.entity.Follow;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.mapper.BlogLikeMapper;
+import com.hmdp.mapper.FeedInboxMapper;
 import com.hmdp.service.IBlogService;
 import com.hmdp.service.IFollowService;
 import com.hmdp.service.IUserService;
@@ -70,6 +72,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     @Resource
     private BlogLikeMapper blogLikeMapper;
 
+    @Resource
+    private FeedInboxMapper feedInboxMapper;
+
     @Override
     @Transactional
     public Result likeBlog(Long id) {
@@ -123,6 +128,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     }
 
     @Override
+    @Transactional
     public Result saveBlog(Blog blog) {
         Long userId = UserHolder.getUser().getId();
         blog.setUserId(userId);
@@ -131,9 +137,21 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         if (follows == null || follows.isEmpty()) {
             return Result.ok(blog.getId());
         }
-        // 循环推送到每个粉丝的feed ZSet
+        long score = System.currentTimeMillis();
+        // 循环推送到每个粉丝的feed：先落db inbox，再写redis热层
         follows.forEach(follow -> {
-            stringRedisTemplate.opsForZSet().add(FEED_KEY + follow.getUserId(), blog.getId().toString(), System.currentTimeMillis());
+            Long recipientId = follow.getUserId();
+            FeedInbox inbox = new FeedInbox()
+                    .setRecipientId(recipientId)
+                    .setBlogId(blog.getId())
+                    .setScore(score)
+                    .setCreateTime(LocalDateTime.now());
+            try {
+                feedInboxMapper.insert(inbox);
+            } catch (DuplicateKeyException ignore) {
+                // 幂等重试：唯一键(recipient_id, blog_id)保证不重复插入
+            }
+            addToInboxCache(recipientId, blog.getId(), score);
         });
         return Result.ok(blog.getId());
     }
@@ -280,28 +298,47 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         Long userId = UserHolder.getUser().getId();
         long maxScore = (max == null || max <= 0) ? Long.MAX_VALUE : max;
         int os = (offset == null || offset < 0) ? 0 : offset;
+        int pageSize = SystemConstants.DEFAULT_PAGE_SIZE;
 
         String key = FEED_KEY + userId;
         Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
-                .reverseRangeByScoreWithScores(key, 0, maxScore, os, SystemConstants.DEFAULT_PAGE_SIZE);
-        if (typedTuples == null || typedTuples.isEmpty()) {
-            ScrollResult empty = new ScrollResult();
-            empty.setList(Collections.emptyList());
-            empty.setMinTime(maxScore);
-            empty.setOffset(os);
-            return Result.ok(empty);
-        }
+                .reverseRangeByScoreWithScores(key, 0, maxScore, os, pageSize);
 
-        List<Long> ids = new ArrayList<>(typedTuples.size());
-        List<Long> scoreList = new ArrayList<>(typedTuples.size());
-        for (ZSetOperations.TypedTuple<String> tuple : typedTuples) {
-            String blogIdStr = tuple.getValue();
-            if (blogIdStr == null) {
-                continue;
+        List<Long> ids = new ArrayList<>(pageSize);
+        List<Long> scoreList = new ArrayList<>(pageSize);
+        if (typedTuples != null && !typedTuples.isEmpty()) {
+            for (ZSetOperations.TypedTuple<String> tuple : typedTuples) {
+                String blogIdStr = tuple.getValue();
+                if (blogIdStr == null) {
+                    continue;
+                }
+                ids.add(Long.valueOf(blogIdStr));
+                long time = tuple.getScore() == null ? 0L : tuple.getScore().longValue();
+                scoreList.add(time);
             }
-            ids.add(Long.valueOf(blogIdStr));
-            long time = tuple.getScore() == null ? 0L : tuple.getScore().longValue();
-            scoreList.add(time);
+        } else {
+            // stage2: 读db inbox
+            List<FeedInbox> inboxRows = queryInboxFromDb(userId, maxScore, os, pageSize);
+            // stage3: db inbox为空时，按关注关系+博客表做冷层重建
+            if (inboxRows.isEmpty()) {
+                inboxRows = rebuildInboxFromFollowBlogs(userId, maxScore, os, pageSize);
+                persistInboxRows(userId, inboxRows);
+            }
+            if (inboxRows.isEmpty()) {
+                ScrollResult empty = new ScrollResult();
+                empty.setList(Collections.emptyList());
+                empty.setMinTime(maxScore);
+                empty.setOffset(os);
+                return Result.ok(empty);
+            }
+            for (FeedInbox row : inboxRows) {
+                if (row.getBlogId() == null || row.getScore() == null) {
+                    continue;
+                }
+                ids.add(row.getBlogId());
+                scoreList.add(row.getScore());
+                addToInboxCache(userId, row.getBlogId(), row.getScore());
+            }
         }
         if (ids.isEmpty()) {
             ScrollResult empty = new ScrollResult();
@@ -333,6 +370,103 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         result.setMinTime(minTime);
         result.setOffset(nextOffset);
         return Result.ok(result);
+    }
+
+    private List<FeedInbox> queryInboxFromDb(Long recipientId, long maxScore, int offset, int pageSize) {
+        if (maxScore == Long.MAX_VALUE) {
+            return feedInboxMapper.selectList(new LambdaQueryWrapper<FeedInbox>()
+                    .select(FeedInbox::getId, FeedInbox::getRecipientId, FeedInbox::getBlogId, FeedInbox::getScore)
+                    .eq(FeedInbox::getRecipientId, recipientId)
+                    .orderByDesc(FeedInbox::getScore, FeedInbox::getId)
+                    .last("LIMIT " + pageSize));
+        }
+
+        List<FeedInbox> result = new ArrayList<>(pageSize);
+        List<FeedInbox> sameScore = feedInboxMapper.selectList(new LambdaQueryWrapper<FeedInbox>()
+                .select(FeedInbox::getId, FeedInbox::getRecipientId, FeedInbox::getBlogId, FeedInbox::getScore)
+                .eq(FeedInbox::getRecipientId, recipientId)
+                .eq(FeedInbox::getScore, maxScore)
+                .orderByDesc(FeedInbox::getId)
+                .last("LIMIT " + offset + "," + pageSize));
+        result.addAll(sameScore);
+
+        int remain = pageSize - result.size();
+        if (remain > 0) {
+            List<FeedInbox> older = feedInboxMapper.selectList(new LambdaQueryWrapper<FeedInbox>()
+                    .select(FeedInbox::getId, FeedInbox::getRecipientId, FeedInbox::getBlogId, FeedInbox::getScore)
+                    .eq(FeedInbox::getRecipientId, recipientId)
+                    .lt(FeedInbox::getScore, maxScore)
+                    .orderByDesc(FeedInbox::getScore, FeedInbox::getId)
+                    .last("LIMIT " + remain));
+            result.addAll(older);
+        }
+        return result;
+    }
+
+    private List<FeedInbox> rebuildInboxFromFollowBlogs(Long recipientId, long maxScore, int offset, int pageSize) {
+        List<Long> followUserIds = followService.query()
+                .eq("user_id", recipientId)
+                .list()
+                .stream()
+                .map(Follow::getFollowUserId)
+                .collect(Collectors.toList());
+        if (followUserIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        LambdaQueryWrapper<Blog> wrapper = new LambdaQueryWrapper<Blog>()
+                .select(Blog::getId, Blog::getCreateTime)
+                .in(Blog::getUserId, followUserIds)
+                .orderByDesc(Blog::getCreateTime, Blog::getId);
+        if (maxScore < Long.MAX_VALUE) {
+            wrapper.le(Blog::getCreateTime, toLocalDateTime(maxScore));
+        }
+        if (offset > 0) {
+            wrapper.last("LIMIT " + offset + "," + pageSize);
+        } else {
+            wrapper.last("LIMIT " + pageSize);
+        }
+        List<Blog> blogs = list(wrapper);
+        if (blogs.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<FeedInbox> rows = new ArrayList<>(blogs.size());
+        for (Blog item : blogs) {
+            if (item.getId() == null) {
+                continue;
+            }
+            rows.add(new FeedInbox()
+                    .setRecipientId(recipientId)
+                    .setBlogId(item.getId())
+                    .setScore(toEpochMilli(item.getCreateTime()))
+                    .setCreateTime(LocalDateTime.now()));
+        }
+        return rows;
+    }
+
+    private void persistInboxRows(Long recipientId, List<FeedInbox> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        for (FeedInbox row : rows) {
+            row.setRecipientId(recipientId);
+            try {
+                feedInboxMapper.insert(row);
+            } catch (DuplicateKeyException ignore) {
+                // 幂等重建
+            }
+        }
+    }
+
+    private void addToInboxCache(Long recipientId, Long blogId, long score) {
+        String key = FEED_KEY + recipientId;
+        stringRedisTemplate.opsForZSet().add(key, blogId.toString(), score);
+        Long size = stringRedisTemplate.opsForZSet().zCard(key);
+        if (size != null && size > SystemConstants.FEED_INBOX_CACHE_MAX_SIZE) {
+            long removeEndRank = size - SystemConstants.FEED_INBOX_CACHE_MAX_SIZE - 1;
+            stringRedisTemplate.opsForZSet().removeRange(key, 0, removeEndRank);
+        }
     }
 
     private BlogLike queryLikeRecordFromDb(Long blogId, Long userId) {
