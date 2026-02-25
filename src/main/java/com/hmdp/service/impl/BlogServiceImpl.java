@@ -132,7 +132,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     public Result saveBlog(Blog blog) {
         Long userId = UserHolder.getUser().getId();
         blog.setUserId(userId);
-        save(blog);
+        save(blog); //写blog
         List<Follow> follows = followService.query().eq("follow_user_id", userId).list();
         if (follows == null || follows.isEmpty()) {
             return Result.ok(blog.getId());
