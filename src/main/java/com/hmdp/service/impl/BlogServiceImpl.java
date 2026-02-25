@@ -138,7 +138,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             return Result.ok(blog.getId());
         }
         long score = System.currentTimeMillis();
-        // 循环推送到每个粉丝的feed：先落db inbox，再写redis热层
+        // 循环推送到每个粉丝的feed：先落db inbox，再写redis热层 
         follows.forEach(follow -> {
             Long recipientId = follow.getUserId();
             FeedInbox inbox = new FeedInbox()
@@ -151,7 +151,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             } catch (DuplicateKeyException ignore) {
                 // 幂等重试：唯一键(recipient_id, blog_id)保证不重复插入
             }
-            addToInboxCache(recipientId, blog.getId(), score);
+            addToInboxCache(recipientId, blog.getId(), score); 
         });
         return Result.ok(blog.getId());
     }
@@ -459,6 +459,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         }
     }
 
+    // inbox-cache 
     private void addToInboxCache(Long recipientId, Long blogId, long score) {
         String key = FEED_KEY + recipientId;
         stringRedisTemplate.opsForZSet().add(key, blogId.toString(), score);
