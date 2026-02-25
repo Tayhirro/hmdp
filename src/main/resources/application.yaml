@@ -40,6 +40,9 @@ hmdp:
     jwt:
       # HS256 secret（示例：至少 32 位随机字符串），为空则 JWT 解析器不生效
       secret: "123456"
+  feed:
+    big-v-fans-threshold: 10000
+    inbox-cache-max-size: 1000
 logging:
   level:
     com.hmdp: debug
