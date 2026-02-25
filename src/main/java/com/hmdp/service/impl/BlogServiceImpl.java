@@ -5,7 +5,6 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.hmdp.config.FeedProperties;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
@@ -75,9 +74,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Resource
     private FeedInboxMapper feedInboxMapper;
-
-    @Resource
-    private FeedProperties feedProperties;
 
     @Override
     @Transactional
@@ -467,10 +463,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     private void addToInboxCache(Long recipientId, Long blogId, long score) {
         String key = FEED_KEY + recipientId;
         stringRedisTemplate.opsForZSet().add(key, blogId.toString(), score);
-        int maxSize = feedProperties.getInboxCacheMaxSize();
         Long size = stringRedisTemplate.opsForZSet().zCard(key);
-        if (size != null && size > maxSize) {
-            long removeEndRank = size - maxSize - 1;
+        if (size != null && size > SystemConstants.FEED_INBOX_CACHE_MAX_SIZE) {
+            long removeEndRank = size - SystemConstants.FEED_INBOX_CACHE_MAX_SIZE - 1;
             stringRedisTemplate.opsForZSet().removeRange(key, 0, removeEndRank);
         }
     }
