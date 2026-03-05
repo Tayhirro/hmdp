@@ -5,8 +5,8 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.dto.FollowFeedQueryResult;
 import com.hmdp.dto.Result;
-import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
 import com.hmdp.entity.BlogLike;
@@ -22,6 +22,10 @@ import com.hmdp.service.IUserService;
 import com.hmdp.service.strategy.BlogQueryContext;
 import com.hmdp.service.strategy.BlogRankStrategy;
 import com.hmdp.service.strategy.BlogRankStrategyRouter;
+import com.hmdp.service.strategy.follow.FollowFeedQueryRequest;
+import com.hmdp.service.strategy.follow.FollowFeedRoute;
+import com.hmdp.service.strategy.follow.FollowInboxPullQuery;
+import com.hmdp.service.strategy.follow.FollowOutboxPushQuery;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -74,6 +78,12 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Resource
     private FeedInboxMapper feedInboxMapper;
+
+    @Autowired(required = false)
+    private FollowOutboxPushQuery followOutboxPushQuery;
+
+    @Autowired(required = false)
+    private FollowInboxPullQuery followInboxPullQuery;
 
     @Override
     @Transactional
@@ -296,9 +306,70 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     @Override
     public Result queryBlogOfFollow(Long max, Integer offset) {
         Long userId = UserHolder.getUser().getId();
+        FollowFeedQueryRequest request = buildFollowFeedRequest(userId, max, offset);
+        FollowFeedQueryResult response = getFollowFeedResponse(request);
+        return Result.ok(response);
+    }
+
+    private FollowFeedQueryRequest buildFollowFeedRequest(Long userId, Long max, Integer offset) {
         long maxScore = (max == null || max <= 0) ? Long.MAX_VALUE : max;
-        int os = (offset == null || offset < 0) ? 0 : offset;
+        int safeOffset = (offset == null || offset < 0) ? 0 : offset;
         int pageSize = SystemConstants.DEFAULT_PAGE_SIZE;
+
+        BlogQueryContext context = new BlogQueryContext();
+        context.setScene("follow");
+        context.setUserId(userId);
+        context.setPageSize(pageSize);
+        context.getFeatures().put("maxScore", maxScore);
+        context.getFeatures().put("offset", safeOffset);
+
+        FollowFeedQueryRequest request = new FollowFeedQueryRequest();
+        request.setUserId(userId);
+        request.setMaxScore(maxScore);
+        request.setOffset(safeOffset);
+        request.setPageSize(pageSize);
+        request.setContext(context);
+        return request;
+    }
+
+    private FollowFeedQueryResult getFollowFeedResponse(FollowFeedQueryRequest request) {
+        FollowFeedRoute route = selectVRoute(request);
+        FollowFeedQueryResult result = route == FollowFeedRoute.OUTBOX_PUSH
+                ? getBigVResponse(request)
+                : getSmallVResponse(request);
+        if (result.getContext() == null) {
+            result.setContext(request.getContext());
+        }
+        if (result.getRoute() == null) {
+            result.setRoute(route.name());
+        }
+        return result;
+    }
+
+    private FollowFeedRoute selectVRoute(FollowFeedQueryRequest request) {
+        // TODO: 按关注博主粉丝规模、在线状态或其他特征决定走 outbox push 还是 inbox pull
+        return FollowFeedRoute.OUTBOX_PUSH;
+    }
+
+    private FollowFeedQueryResult getBigVResponse(FollowFeedQueryRequest request) {
+        if (followOutboxPushQuery != null) {
+            return followOutboxPushQuery.query(request);
+        }
+        return queryFollowFeedFallback(request, FollowFeedRoute.OUTBOX_PUSH);
+    }
+
+    private FollowFeedQueryResult getSmallVResponse(FollowFeedQueryRequest request) {
+        if (followInboxPullQuery != null) {
+            return followInboxPullQuery.query(request);
+        }
+        return queryFollowFeedFallback(request, FollowFeedRoute.INBOX_PULL);
+    }
+
+    private FollowFeedQueryResult queryFollowFeedFallback(FollowFeedQueryRequest request, FollowFeedRoute route) {
+        Long userId = request.getUserId();
+        long maxScore = request.getMaxScore();
+        int os = request.getOffset();
+        int pageSize = request.getPageSize();
 
         String key = FEED_KEY + userId;
         Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
@@ -325,11 +396,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 persistInboxRows(userId, inboxRows);
             }
             if (inboxRows.isEmpty()) {
-                ScrollResult empty = new ScrollResult();
-                empty.setList(Collections.emptyList());
-                empty.setMinTime(maxScore);
-                empty.setOffset(os);
-                return Result.ok(empty);
+                return emptyFollowFeedResult(request, route);
             }
             for (FeedInbox row : inboxRows) {
                 if (row.getBlogId() == null || row.getScore() == null) {
@@ -341,11 +408,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             }
         }
         if (ids.isEmpty()) {
-            ScrollResult empty = new ScrollResult();
-            empty.setList(Collections.emptyList());
-            empty.setMinTime(maxScore);
-            empty.setOffset(os);
-            return Result.ok(empty);
+            return emptyFollowFeedResult(request, route);
         }
         long minTime = scoreList.get(scoreList.size() - 1);
         int sameCount = 0;
@@ -365,11 +428,27 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             fillBlogLikedFlag(blog);
         });
 
-        ScrollResult result = new ScrollResult();
+        FollowFeedQueryResult result = new FollowFeedQueryResult();
         result.setList(blogs);
         result.setMinTime(minTime);
         result.setOffset(nextOffset);
-        return Result.ok(result);
+        result.setContext(request.getContext());
+        result.setRoute(route.name());
+        result.setOrderedBlogIds(new ArrayList<>(ids));
+        result.setSortScores(new ArrayList<>(scoreList));
+        return result;
+    }
+
+    private FollowFeedQueryResult emptyFollowFeedResult(FollowFeedQueryRequest request, FollowFeedRoute route) {
+        FollowFeedQueryResult empty = new FollowFeedQueryResult();
+        empty.setList(Collections.emptyList());
+        empty.setMinTime(request.getMaxScore());
+        empty.setOffset(request.getOffset());
+        empty.setContext(request.getContext());
+        empty.setRoute(route.name());
+        empty.setOrderedBlogIds(Collections.emptyList());
+        empty.setSortScores(Collections.emptyList());
+        return empty;
     }
 
     private List<FeedInbox> queryInboxFromDb(Long recipientId, long maxScore, int offset, int pageSize) {
