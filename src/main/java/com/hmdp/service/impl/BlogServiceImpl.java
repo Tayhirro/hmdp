@@ -306,12 +306,12 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     @Override
     public Result queryBlogOfFollow(Long max, Integer offset) {
         Long userId = UserHolder.getUser().getId();
-        FollowFeedQueryRequest request = buildFollowFeedRequest(userId, max, offset);
-        FollowFeedQueryResult response = getFollowFeedResponse(request);
+        FollowFeedQueryRequest request = getSmallVRequest(userId, max, offset);
+        FollowFeedQueryResult response = getBigVResponse(request);
         return Result.ok(response);
     }
 
-    private FollowFeedQueryRequest buildFollowFeedRequest(Long userId, Long max, Integer offset) {
+    private FollowFeedQueryRequest getSmallVRequest(Long userId, Long max, Integer offset) {
         long maxScore = (max == null || max <= 0) ? Long.MAX_VALUE : max;
         int safeOffset = (offset == null || offset < 0) ? 0 : offset;
         int pageSize = SystemConstants.DEFAULT_PAGE_SIZE;
@@ -332,11 +332,16 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         return request;
     }
 
-    private FollowFeedQueryResult getFollowFeedResponse(FollowFeedQueryRequest request) {
+    private FollowFeedQueryResult getBigVResponse(FollowFeedQueryRequest request) {
         FollowFeedRoute route = selectVRoute(request);
-        FollowFeedQueryResult result = route == FollowFeedRoute.OUTBOX_PUSH
-                ? getBigVResponse(request)
-                : getSmallVResponse(request);
+        FollowFeedQueryResult result;
+        if (route == FollowFeedRoute.OUTBOX_PUSH && followOutboxPushQuery != null) {
+            result = followOutboxPushQuery.query(request);
+        } else if (route == FollowFeedRoute.INBOX_PULL && followInboxPullQuery != null) {
+            result = followInboxPullQuery.query(request);
+        } else {
+            result = queryFollowFeedFallback(request, route);
+        }
         if (result.getContext() == null) {
             result.setContext(request.getContext());
         }
@@ -349,20 +354,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     private FollowFeedRoute selectVRoute(FollowFeedQueryRequest request) {
         // TODO: 按关注博主粉丝规模、在线状态或其他特征决定走 outbox push 还是 inbox pull
         return FollowFeedRoute.OUTBOX_PUSH;
-    }
-
-    private FollowFeedQueryResult getBigVResponse(FollowFeedQueryRequest request) {
-        if (followOutboxPushQuery != null) {
-            return followOutboxPushQuery.query(request);
-        }
-        return queryFollowFeedFallback(request, FollowFeedRoute.OUTBOX_PUSH);
-    }
-
-    private FollowFeedQueryResult getSmallVResponse(FollowFeedQueryRequest request) {
-        if (followInboxPullQuery != null) {
-            return followInboxPullQuery.query(request);
-        }
-        return queryFollowFeedFallback(request, FollowFeedRoute.INBOX_PULL);
     }
 
     private FollowFeedQueryResult queryFollowFeedFallback(FollowFeedQueryRequest request, FollowFeedRoute route) {
