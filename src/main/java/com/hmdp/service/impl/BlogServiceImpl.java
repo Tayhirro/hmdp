@@ -5,27 +5,22 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.hmdp.dto.FollowFeedQueryResult;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
 import com.hmdp.entity.BlogLike;
-import com.hmdp.entity.FeedInbox;
-import com.hmdp.entity.Follow;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.mapper.BlogLikeMapper;
-import com.hmdp.mapper.FeedInboxMapper;
 import com.hmdp.service.IBlogService;
-import com.hmdp.service.IFollowService;
 import com.hmdp.service.IUserService;
-import com.hmdp.service.strategy.BlogQueryContext;
-import com.hmdp.service.strategy.BlogRankStrategy;
-import com.hmdp.service.strategy.BlogRankStrategyRouter;
-import com.hmdp.service.strategy.follow.FollowFeedQueryRequest;
-import com.hmdp.service.strategy.follow.FollowFeedRoute;
-import com.hmdp.service.strategy.follow.FollowInboxPullQuery;
-import com.hmdp.service.strategy.follow.FollowOutboxPushQuery;
+import com.hmdp.service.strategy.ranking.RankingContext;
+import com.hmdp.service.strategy.ranking.RankingStrategy;
+import com.hmdp.service.strategy.ranking.RankingStrategyRegistry;
+import com.hmdp.service.feedcache.FeedCacheService;
+import com.hmdp.service.strategy.recall.RecallContext;
+import com.hmdp.service.strategy.recall.RecallOrchestrator;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,18 +43,13 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY;
-import static com.hmdp.utils.RedisConstants.FEED_KEY;
 
-/**
- * <p>
- *  服务实现类
- * </p>
- *
- * @author 虎哥
- * @since 2021-12-22
- */
 @Service
 public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IBlogService {
+
+    private static final int CANDIDATE_POOL_SIZE = 200;
+    private static final int CANDIDATES_PER_CHANNEL = 100;
+    private static final int PAGE_SIZE = 50;
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
@@ -67,23 +57,17 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     @Autowired
     private IUserService userService;
 
-    @Autowired
-    private IFollowService followService;
-
-    @Resource
-    private BlogRankStrategyRouter strategyRouter;
-
     @Resource
     private BlogLikeMapper blogLikeMapper;
 
     @Resource
-    private FeedInboxMapper feedInboxMapper;
+    private RankingStrategyRegistry rankingStrategyRegistry;
 
-    @Autowired(required = false)
-    private FollowOutboxPushQuery followOutboxPushQuery;
+    @Resource
+    private RecallOrchestrator recallOrchestrator;
 
-    @Autowired(required = false)
-    private FollowInboxPullQuery followInboxPullQuery;
+    @Resource
+    private FeedCacheService feedCacheService;
 
     @Override
     @Transactional
@@ -91,10 +75,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         Long userId = UserHolder.getUser().getId();
         String userIdStr = userId.toString();
         String key = BLOG_LIKED_KEY + id;
-        // 缓存---数据库
         Double score = stringRedisTemplate.opsForZSet().score(key, userIdStr);
         boolean isLiked = score != null;
-        
+
         if (!isLiked) {
             BlogLike likeRecord = queryLikeRecordFromDb(id, userId);
             if (likeRecord != null) {
@@ -138,57 +121,19 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     }
 
     @Override
-    @Transactional
     public Result saveBlog(Blog blog) {
         Long userId = UserHolder.getUser().getId();
         blog.setUserId(userId);
-        save(blog); //写blog
-        List<Follow> follows = followService.query().eq("follow_user_id", userId).list();
-        if (follows == null || follows.isEmpty()) {
-            return Result.ok(blog.getId());
-        }
-        long score = System.currentTimeMillis();
-        // 循环推送到每个粉丝的feed：先落db inbox，再写redis热层 
-        follows.forEach(follow -> {
-            Long recipientId = follow.getUserId();
-            FeedInbox inbox = new FeedInbox()
-                    .setRecipientId(recipientId)
-                    .setBlogId(blog.getId())
-                    .setScore(score)
-                    .setCreateTime(LocalDateTime.now());
-            try {
-                feedInboxMapper.insert(inbox);
-            } catch (DuplicateKeyException ignore) {
-                // 幂等重试：唯一键(recipient_id, blog_id)保证不重复插入
-            }
-            addToInboxCache(recipientId, blog.getId(), score); 
-        });
+        save(blog);
         return Result.ok(blog.getId());
     }
 
     @Override
     public Result queryHotBlog(Integer current) {
-        BlogRankStrategy hotStrategy = strategyRouter.get("hot");
-        if (hotStrategy == null) {
-            return Result.fail("热门策略未配置");
-        }
-        BlogQueryContext ctx = new BlogQueryContext();
-        ctx.setScene("hot");
-        ctx.setCurrent(current);
-        ctx.setPageSize(SystemConstants.MAX_PAGE_SIZE);
-        UserDTO currentUser = UserHolder.getUser();
-        if (currentUser != null) {
-            ctx.setUserId(currentUser.getId());
-        }
-        // page 排序逻辑 -- 推荐系统排序
-        Page<Long> idPage = hotStrategy.rank(ctx);
-        List<Long> ids = idPage.getRecords();
-        if (ids == null || ids.isEmpty()) {
-            return Result.ok(Collections.emptyList());
-        }
-
-        String idsStr = StrUtil.join(",", ids);
-        List<Blog> blogs = query().in("id", ids).last("ORDER BY FIELD(id," + idsStr + ")").list();
+        Page<Blog> page = query()
+                .orderByDesc("liked")
+                .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
+        List<Blog> blogs = page.getRecords();
         blogs.forEach(blog -> {
             fillBlogUser(blog);
             fillBlogLikedFlag(blog);
@@ -198,13 +143,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     private void fillBlogUser(Blog blog) {
         Long userId = blog.getUserId();
-        if (userId == null) {
-            return;
-        }
+        if (userId == null) return;
         User user = userService.getById(userId);
-        if (user == null) {
-            return;
-        }
+        if (user == null) return;
         blog.setName(user.getNickName());
         blog.setIcon(user.getIcon());
     }
@@ -233,7 +174,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Override
     public Result queryBlogLikes(Long id, Long max, Integer offset) {
-        // max 最大时间戳 offset 偏离max时间戳跳过多少 pagesize 需要数据多少
         if (id == null) {
             return Result.fail("博客ID不能为空");
         }
@@ -248,12 +188,10 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         List<Long> userIds = new ArrayList<>(pageSize);
         List<Long> scoreList = new ArrayList<>(pageSize);
 
-        if (tupleSet != null && !tupleSet.isEmpty()) {   // 如果查到
+        if (tupleSet != null && !tupleSet.isEmpty()) {
             for (ZSetOperations.TypedTuple<String> tuple : tupleSet) {
                 String userIdStr = tuple.getValue();
-                if (userIdStr == null) {
-                    continue;
-                }
+                if (userIdStr == null) continue;
                 try {
                     userIds.add(Long.valueOf(userIdStr));
                 } catch (NumberFormatException ignore) {
@@ -261,15 +199,13 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 }
                 scoreList.add(tuple.getScore() == null ? 0L : tuple.getScore().longValue());
             }
-        } else {    //db 查询
+        } else {
             List<BlogLike> dbLikes = queryLikesFromDb(id, maxScore, from, pageSize);
             if (dbLikes.isEmpty()) {
                 return Result.ok(emptyLikesResult(maxScore, from));
             }
             for (BlogLike blogLike : dbLikes) {
-                if (blogLike.getUserId() == null) {
-                    continue;
-                }
+                if (blogLike.getUserId() == null) continue;
                 long score = toEpochMilli(blogLike.getCreateTime());
                 userIds.add(blogLike.getUserId());
                 scoreList.add(score);
@@ -282,125 +218,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         }
 
         List<UserDTO> dtoList = hydrateLikeUsers(userIds);
-        //倒叙获取scoreList
-        long minTime =  scoreList.get(scoreList.size() - 1); 
-        int sameCount = 0;
-        for (int i = scoreList.size() - 1; i >= 0; i--) {
-            if (scoreList.get(i).equals(minTime)) {
-                sameCount++;
-            } else {
-                break;
-            }
-        }
-        int nextOffset = (minTime == maxScore ? from : 0) + sameCount;  // min + offset 分情况
-
-        Map<String, Object> data = new HashMap<>(8);
-        data.put("list", dtoList);
-        data.put("minTime", minTime);
-        data.put("nextOffset", nextOffset);
-        data.put("hasMore", scoreList.size() == pageSize);
-        return Result.ok(data);
-    }
-
-    // 查询我关注的博主的博客 查询inbox --->转换 blog
-    @Override
-    public Result queryBlogOfFollow(Long max, Integer offset) {
-        Long userId = UserHolder.getUser().getId();
-        FollowFeedQueryRequest request = getSmallVRequest(userId, max, offset);
-        FollowFeedQueryResult response = getBigVResponse(request);
-        return Result.ok(response);
-    }
-
-    private FollowFeedQueryRequest getSmallVRequest(Long userId, Long max, Integer offset) {
-        long maxScore = (max == null || max <= 0) ? Long.MAX_VALUE : max;
-        int safeOffset = (offset == null || offset < 0) ? 0 : offset;
-        int pageSize = SystemConstants.DEFAULT_PAGE_SIZE;
-
-        BlogQueryContext context = new BlogQueryContext();
-        context.setScene("follow");
-        context.setUserId(userId);
-        context.setPageSize(pageSize);
-        context.getFeatures().put("maxScore", maxScore);
-        context.getFeatures().put("offset", safeOffset);
-
-        FollowFeedQueryRequest request = new FollowFeedQueryRequest();
-        request.setUserId(userId);
-        request.setMaxScore(maxScore);
-        request.setOffset(safeOffset);
-        request.setPageSize(pageSize);
-        request.setContext(context);
-        return request;
-    }
-
-    private FollowFeedQueryResult getBigVResponse(FollowFeedQueryRequest request) {
-        FollowFeedRoute route = selectVRoute(request);
-        FollowFeedQueryResult result;
-        if (route == FollowFeedRoute.OUTBOX_PUSH && followOutboxPushQuery != null) {
-            result = followOutboxPushQuery.query(request);
-        } else if (route == FollowFeedRoute.INBOX_PULL && followInboxPullQuery != null) {
-            result = followInboxPullQuery.query(request);
-        } else {
-            result = queryFollowFeedFallback(request, route);
-        }
-        if (result.getContext() == null) {
-            result.setContext(request.getContext());
-        }
-        if (result.getRoute() == null) {
-            result.setRoute(route.name());
-        }
-        return result;
-    }
-
-    private FollowFeedRoute selectVRoute(FollowFeedQueryRequest request) {
-        // TODO: 按关注博主粉丝规模、在线状态或其他特征决定走 outbox push 还是 inbox pull
-        return FollowFeedRoute.OUTBOX_PUSH;
-    }
-
-    private FollowFeedQueryResult queryFollowFeedFallback(FollowFeedQueryRequest request, FollowFeedRoute route) {
-        Long userId = request.getUserId();
-        long maxScore = request.getMaxScore();
-        int os = request.getOffset();
-        int pageSize = request.getPageSize();
-
-        String key = FEED_KEY + userId;
-        Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
-                .reverseRangeByScoreWithScores(key, 0, maxScore, os, pageSize);
-
-        List<Long> ids = new ArrayList<>(pageSize);
-        List<Long> scoreList = new ArrayList<>(pageSize);
-        if (typedTuples != null && !typedTuples.isEmpty()) {
-            for (ZSetOperations.TypedTuple<String> tuple : typedTuples) {
-                String blogIdStr = tuple.getValue();
-                if (blogIdStr == null) {
-                    continue;
-                }
-                ids.add(Long.valueOf(blogIdStr));
-                long time = tuple.getScore() == null ? 0L : tuple.getScore().longValue();
-                scoreList.add(time);
-            }
-        } else {
-            // stage2: 读db inbox
-            List<FeedInbox> inboxRows = queryInboxFromDb(userId, maxScore, os, pageSize);
-            // stage3: db inbox为空时，按关注关系+博客表做冷层重建
-            if (inboxRows.isEmpty()) {
-                inboxRows = rebuildInboxFromFollowBlogs(userId, maxScore, os, pageSize);
-                persistInboxRows(userId, inboxRows);
-            }
-            if (inboxRows.isEmpty()) {
-                return emptyFollowFeedResult(request, route);
-            }
-            for (FeedInbox row : inboxRows) {
-                if (row.getBlogId() == null || row.getScore() == null) {
-                    continue;
-                }
-                ids.add(row.getBlogId());
-                scoreList.add(row.getScore());
-                addToInboxCache(userId, row.getBlogId(), row.getScore());
-            }
-        }
-        if (ids.isEmpty()) {
-            return emptyFollowFeedResult(request, route);
-        }
         long minTime = scoreList.get(scoreList.size() - 1);
         int sameCount = 0;
         for (int i = scoreList.size() - 1; i >= 0; i--) {
@@ -410,134 +227,97 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 break;
             }
         }
-        int nextOffset = (minTime == maxScore ? os : 0) + sameCount;
+        int nextOffset = (minTime == maxScore ? from : 0) + sameCount;
 
-        String idStr = StrUtil.join(",", ids);
-        List<Blog> blogs = query().in("id", ids).last("ORDER BY FIELD(id," + idStr + ")").list();
-        blogs.forEach(blog -> {
+        Map<String, Object> data = new HashMap<>(8);
+        data.put("list", dtoList);
+        data.put("minTime", minTime);
+        data.put("nextOffset", nextOffset);
+        data.put("hasMore", scoreList.size() == pageSize);
+        return Result.ok(data);
+    }
+
+    @Override
+    public Result queryBlogOfFollow(Double lastScore, Long lastId, String rankingStrategyName) {
+        UserDTO user = UserHolder.getUser();
+        Long userId = user.getId();
+
+        // 1. Try cache first
+        int fetchSize = PAGE_SIZE + 1;
+        List<Long> cachedIds = feedCacheService.getCachedIds(userId, rankingStrategyName, lastScore, fetchSize);
+
+        if (cachedIds != null) {
+            boolean hasMore = cachedIds.size() > PAGE_SIZE;
+            List<Long> pageIds = cachedIds.size() > PAGE_SIZE
+                    ? cachedIds.subList(0, PAGE_SIZE)
+                    : cachedIds;
+
+            String idStr = pageIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+            List<Blog> blogs = query().in("id", pageIds).last("ORDER BY FIELD(id," + idStr + ")").list();
+
+            blogs.forEach(blog -> {
+                fillBlogUser(blog);
+                fillBlogLikedFlag(blog);
+            });
+
+            Long newLastId = pageIds.isEmpty() ? null : pageIds.get(pageIds.size() - 1);
+            Double newLastScore = newLastId != null
+                    ? feedCacheService.getScore(userId, rankingStrategyName, newLastId)
+                    : null;
+            return Result.ok(new ScrollResult(blogs, newLastScore, newLastId, hasMore));
+        }
+
+        // 2. Cache miss: recall + rank + cache
+        RankingStrategy<Blog> rankingStrategy = rankingStrategyRegistry.getStrategy(rankingStrategyName);
+
+        Long maxTime = lastScore != null ? lastScore.longValue() : null;
+        RecallContext recallCtx = RecallContext.builder()
+                .userId(userId)
+                .maxTime(maxTime)
+                .limit(CANDIDATES_PER_CHANNEL)
+                .build();
+        List<Long> candidateIds = recallOrchestrator.multiRecallAll(recallCtx);
+        boolean mayHaveMore = candidateIds.size() >= CANDIDATE_POOL_SIZE;
+        if (candidateIds.isEmpty()) {
+            return Result.ok(new ScrollResult(new ArrayList<>(), null, null, false));
+        }
+
+        int capped = Math.min(candidateIds.size(), CANDIDATE_POOL_SIZE);
+        List<Long> idList = candidateIds.subList(0, capped);
+
+        String idStr = idList.stream().map(String::valueOf).collect(Collectors.joining(","));
+        List<Blog> blogs = query().in("id", idList).last("ORDER BY FIELD(id," + idStr + ")").list();
+
+        Map<Long, Double> authorAffinity = new HashMap<>();
+        for (Blog blog : blogs) {
+            authorAffinity.putIfAbsent(blog.getUserId(), 0.5);
+        }
+        RankingContext ctx = RankingContext.builder()
+                .currentUserId(userId)
+                .now(LocalDateTime.now())
+                .authorAffinity(authorAffinity)
+                .build();
+
+        blogs = rankingStrategy.rank(blogs, ctx);
+
+        // Store in cache
+        feedCacheService.cacheFeed(userId, rankingStrategyName, blogs, rankingStrategy, ctx);
+
+        boolean hasMore = mayHaveMore || blogs.size() > PAGE_SIZE;
+        List<Blog> pageList = blogs.size() > PAGE_SIZE
+                ? blogs.subList(0, PAGE_SIZE)
+                : blogs;
+
+        pageList.forEach(blog -> {
             fillBlogUser(blog);
             fillBlogLikedFlag(blog);
         });
 
-        FollowFeedQueryResult result = new FollowFeedQueryResult();
-        result.setList(blogs);
-        result.setMinTime(minTime);
-        result.setOffset(nextOffset);
-        result.setContext(request.getContext());
-        result.setRoute(route.name());
-        result.setOrderedBlogIds(new ArrayList<>(ids));
-        result.setSortScores(new ArrayList<>(scoreList));
-        return result;
-    }
-
-    private FollowFeedQueryResult emptyFollowFeedResult(FollowFeedQueryRequest request, FollowFeedRoute route) {
-        FollowFeedQueryResult empty = new FollowFeedQueryResult();
-        empty.setList(Collections.emptyList());
-        empty.setMinTime(request.getMaxScore());
-        empty.setOffset(request.getOffset());
-        empty.setContext(request.getContext());
-        empty.setRoute(route.name());
-        empty.setOrderedBlogIds(Collections.emptyList());
-        empty.setSortScores(Collections.emptyList());
-        return empty;
-    }
-
-    private List<FeedInbox> queryInboxFromDb(Long recipientId, long maxScore, int offset, int pageSize) {
-        if (maxScore == Long.MAX_VALUE) {
-            return feedInboxMapper.selectList(new LambdaQueryWrapper<FeedInbox>()
-                    .select(FeedInbox::getId, FeedInbox::getRecipientId, FeedInbox::getBlogId, FeedInbox::getScore)
-                    .eq(FeedInbox::getRecipientId, recipientId)
-                    .orderByDesc(FeedInbox::getScore, FeedInbox::getId)
-                    .last("LIMIT " + pageSize));
-        }
-
-        List<FeedInbox> result = new ArrayList<>(pageSize);
-        List<FeedInbox> sameScore = feedInboxMapper.selectList(new LambdaQueryWrapper<FeedInbox>()
-                .select(FeedInbox::getId, FeedInbox::getRecipientId, FeedInbox::getBlogId, FeedInbox::getScore)
-                .eq(FeedInbox::getRecipientId, recipientId)
-                .eq(FeedInbox::getScore, maxScore)
-                .orderByDesc(FeedInbox::getId)
-                .last("LIMIT " + offset + "," + pageSize));
-        result.addAll(sameScore);
-
-        int remain = pageSize - result.size();
-        if (remain > 0) {
-            List<FeedInbox> older = feedInboxMapper.selectList(new LambdaQueryWrapper<FeedInbox>()
-                    .select(FeedInbox::getId, FeedInbox::getRecipientId, FeedInbox::getBlogId, FeedInbox::getScore)
-                    .eq(FeedInbox::getRecipientId, recipientId)
-                    .lt(FeedInbox::getScore, maxScore)
-                    .orderByDesc(FeedInbox::getScore, FeedInbox::getId)
-                    .last("LIMIT " + remain));
-            result.addAll(older);
-        }
-        return result;
-    }
-
-    private List<FeedInbox> rebuildInboxFromFollowBlogs(Long recipientId, long maxScore, int offset, int pageSize) {
-        List<Long> followUserIds = followService.query()
-                .eq("user_id", recipientId)
-                .list()
-                .stream()
-                .map(Follow::getFollowUserId)
-                .collect(Collectors.toList());
-        if (followUserIds.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        LambdaQueryWrapper<Blog> wrapper = new LambdaQueryWrapper<Blog>()
-                .select(Blog::getId, Blog::getCreateTime)
-                .in(Blog::getUserId, followUserIds)
-                .orderByDesc(Blog::getCreateTime, Blog::getId);
-        if (maxScore < Long.MAX_VALUE) {
-            wrapper.le(Blog::getCreateTime, toLocalDateTime(maxScore));
-        }
-        if (offset > 0) {
-            wrapper.last("LIMIT " + offset + "," + pageSize);
-        } else {
-            wrapper.last("LIMIT " + pageSize);
-        }
-        List<Blog> blogs = list(wrapper);
-        if (blogs.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        List<FeedInbox> rows = new ArrayList<>(blogs.size());
-        for (Blog item : blogs) {
-            if (item.getId() == null) {
-                continue;
-            }
-            rows.add(new FeedInbox()
-                    .setRecipientId(recipientId)
-                    .setBlogId(item.getId())
-                    .setScore(toEpochMilli(item.getCreateTime()))
-                    .setCreateTime(LocalDateTime.now()));
-        }
-        return rows;
-    }
-
-    private void persistInboxRows(Long recipientId, List<FeedInbox> rows) {
-        if (rows == null || rows.isEmpty()) {
-            return;
-        }
-        for (FeedInbox row : rows) {
-            row.setRecipientId(recipientId);
-            try {
-                feedInboxMapper.insert(row);
-            } catch (DuplicateKeyException ignore) {
-                // 幂等重建
-            }
-        }
-    }
-
-    // inbox-cache 
-    private void addToInboxCache(Long recipientId, Long blogId, long score) {
-        String key = FEED_KEY + recipientId;
-        stringRedisTemplate.opsForZSet().add(key, blogId.toString(), score);
-        Long size = stringRedisTemplate.opsForZSet().zCard(key);
-        if (size != null && size > SystemConstants.FEED_INBOX_CACHE_MAX_SIZE) {
-            long removeEndRank = size - SystemConstants.FEED_INBOX_CACHE_MAX_SIZE - 1;
-            stringRedisTemplate.opsForZSet().removeRange(key, 0, removeEndRank);
-        }
+        Double newLastScore = pageList.isEmpty() ? null
+                : rankingStrategy.score(pageList.get(pageList.size() - 1), ctx);
+        Long newLastId = pageList.isEmpty() ? null
+                : pageList.get(pageList.size() - 1).getId();
+        return Result.ok(new ScrollResult(pageList, newLastScore, newLastId, hasMore));
     }
 
     private BlogLike queryLikeRecordFromDb(Long blogId, Long userId) {
@@ -568,7 +348,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 .last("LIMIT " + offset + "," + pageSize));
         result.addAll(sameTime);
 
-        int remain = pageSize - result.size();  // 如果 remain 还有剩余 则直接 查后续的
+        int remain = pageSize - result.size();
         if (remain > 0) {
             List<BlogLike> older = blogLikeMapper.selectList(new LambdaQueryWrapper<BlogLike>()
                     .select(BlogLike::getId, BlogLike::getUserId, BlogLike::getCreateTime)

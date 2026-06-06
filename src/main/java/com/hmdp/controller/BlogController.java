@@ -64,14 +64,15 @@ public class BlogController {
     }
 
     /**
-     * 查询关注用户的博客流（待你在 service 层补充完整实现）
+     * 查询关注用户的博客流（游标分页，基于 score 滚动）
      */
     @GetMapping("/of/follow")
     public Result queryBlogOfFollow(
-            @RequestParam("lastId") Long max,
-            @RequestParam(value = "offset", defaultValue = "0") Integer offset
+            @RequestParam(value = "lastScore", required = false) Double lastScore,
+            @RequestParam(value = "lastId", required = false) Long lastId,
+            @RequestParam(value = "rankingStrategy", defaultValue = "time") String rankingStrategy
     ) {
-        return blogService.queryBlogOfFollow(max, offset);
+        return blogService.queryBlogOfFollow(lastScore, lastId, rankingStrategy);
     }
 
     @GetMapping("/of/me")
