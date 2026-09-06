@@ -188,4 +188,4 @@ GraphQL 客户端 API（twitter.com/web app 内部）、官方 REST v2 API（用
 
 **产品功能**：Wikipedia《List of features on X》《X (social network)》、X Help Center（X Premium/Creator Subscriptions）、TechCrunch（2026-03 Creator 订阅改版）、Mashable/Economic Times（2026-09 Original Content Rewards 变更）、X Money 相关多来源报道（2026 年中至 9 月）。
 **架构**：the-algorithm 仓库及 README（home-mixer/cr-mixer/light-heavy-ranker/visibility-filters/tweetypie）、twitter-the-algorithm.mintlify.app（introduction/candidate-generation）、Earlybird（ICDE 2012）、GraphJet（VLDB 2016）、Related Query Suggestion（arXiv 1210.7350）、InfoQ「Real-Time Delivery Architecture」（2012）、Slides「Timelines at Scale」（2012，fanout 与混合模式）、trekhleb.dev（2024，Home Timeline API 逆向）、Trends API 行为调研（2009 StackOverflow + twitterapi.io）、Team Blogs（Blobstore/Pelican/Snowflake/FlockDB）。
-**实测**：2026-09-05 登录态 x.com——Explore 五 Tab、趋势排名/分类/帖子量、点击趋势 `src=trend_click`、4~5 分钟刷新对比实验（详见 `hmdp-项目架构分析.md` §4.4）。
+**实测**：2026-09-05 登录态 x.com——Explore 五 Tab、趋势排名/分类/帖子量、点击趋势 `src=trend_click`、4~5 分钟刷新对比实验（详见 `hmdp-项目架构分析.md` §十、热榜与趋势）。

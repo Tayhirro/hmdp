@@ -70,13 +70,13 @@ hmdp/
 | 用户与身份域 | 注册、登录、Token、资料、签到             | `tb_user`、`tb_user_info`、Redis Token/Bitmap                      |
 | 内容域：博客 | 博客生命周期、图片资产、Feed、点赞、评论、内容查询   | `tb_blog`、`tb_blog_image`、`tb_blog_like`、`tb_idempotency_record` |
 | 店铺域    | 店铺查询、缓存、地理位置检索                | `tb_shop`、`tb_shop_type`、Redis Cache/GEO                         |
-| 搜索域    | 统一入口、垂直域召回、查询标准化、分页和分组结果、热榜/趋势（探索性榜单，见 4.4） | `tb_shop`、`tb_blog`、`tb_user` 的 MySQL 关键词基线；热榜当前为 `tb_blog.liked` 排序；未来可接可重建搜索索引       |
+| 搜索域    | 统一入口、垂直域召回、查询标准化、分页和分组结果、热榜/趋势（探索性榜单，见十、热榜与趋势） | `tb_shop`、`tb_blog`、`tb_user` 的 MySQL 关键词基线；热榜当前为 `tb_blog.liked` 排序；未来可接可重建搜索索引       |
 | 社交关系域  | 关注关系、共同关注、关注缓存                | `tb_follow`、Redis Set、Caffeine                                   |
 | 营销与交易域 | 优惠券、秒杀资格与订单                   | `tb_voucher`、`tb_seckill_voucher`、`tb_voucher_order`             |
 | 共享基础设施 | 鉴权入口、文件存储、异常、Redis Key、Flyway | `auth/`、`config/`、`storage/`、`db/migration/`                     |
 
 > [!note] 边界说明
-> “发布博客”只是博客聚合的创建命令，不是编辑、删除、点赞或评论的外层模块。图片资产服务同时支撑发布、编辑和删除，因此放在博客生命周期中说明；底层存储能力再由共享基础设施章节统一描述。搜索是面向店铺、博客、用户等多类内容的横向读取能力，因此接口和实现独立于任一业务 Controller；当前三个 MySQL 垂直域均由 `SearchController` 对外提供。热榜（`GET /blog/hot`）按 Twitter 的先例（趋势是实时搜索基础设施的聚合产物）归入搜索/探索域（4.4），其当前实现仍是内容域的 MySQL 查询，详见 4.4。
+> “发布博客”只是博客聚合的创建命令，不是编辑、删除、点赞或评论的外层模块。图片资产服务同时支撑发布、编辑和删除，因此放在博客生命周期中说明；底层存储能力再由共享基础设施章节统一描述。搜索是面向店铺、博客、用户等多类内容的横向读取能力，因此接口和实现独立于任一业务 Controller；当前三个 MySQL 垂直域均由 `SearchController` 对外提供。热榜（`GET /blog/hot`）按 Twitter 的先例（趋势是实时搜索基础设施的聚合产物）归入搜索/探索域（详见十、热榜与趋势），其当前实现仍是内容域的 MySQL 查询。
 
 ## 全域业务方法说明（统一格式）
 
@@ -359,7 +359,7 @@ hmdp/
 - **状态：** 🟡 已实现，但实时热度字段变化会使跨页近似稳定。
 - **现实触发：** 未登录或已登录用户打开首页热榜，或者继续下拉查看更多热门博客。
 - **调用：** `BlogController.queryHotBlog()` → `IBlogService.queryHotBlog()` → `BlogServiceImpl.queryHotBlog()` → `BlogQueryService.hot()`。
-- **模块归属：** 搜索/探索域（见四、搜索域 4.4）；当前实现是内容域的 MySQL 查询，无关键词检索能力。
+- **模块归属：** 搜索/探索域（见十、热榜与趋势）；当前实现是内容域的 MySQL 查询，无关键词检索能力。
 - **输入：** 可选 cursor，`limit` 默认 10。
 - **正常流程：** 按 `(liked DESC,id DESC)` 做 keyset pagination → 批量装配博客卡片。
 - **示例：** `GET /blog/hot?limit=1` → `{"success":true,"data":{"list":[{"id":101,"liked":88}],"nextCursor":"<cursor>","hasMore":true}}`。
@@ -1641,7 +1641,7 @@ RankingStrategyRegistry  ──→ 按 strategyName 找策略
 | GET | `/blog/{id}` | 查询详情，并补充作者摘要和当前用户点赞状态 |
 | GET | `/blog/of/me?cursor=&limit=` | 按 `(create_time,id)` 游标查询当前用户博客 |
 | GET | `/blog/of/user?id=&cursor=&limit=` | 按 `(create_time,id)` 游标查询指定用户博客 |
-| GET | `/blog/hot?cursor=&limit=` | 按 `(liked,id)` 游标查询热榜（模块归属与演进见 4.4） |
+| GET | `/blog/hot?cursor=&limit=` | 按 `(liked,id)` 游标查询热榜（模块归属与演进见十、热榜与趋势） |
 | GET | `/blog/likes/{id}` | 查询点赞用户滚动列表，详细语义见 2.3 |
 | GET | `/blog/feed?mode=&cursor=` | 查询 Following 或 For You Feed，详细语义见 2.2 |
 
@@ -1665,7 +1665,7 @@ RankingStrategyRegistry  ──→ 按 strategyName 找策略
 > `/blog/of/me`、`/blog/of/user`、热榜和 Feed 都由 Service 组装，Controller 不再直接分页查表；分页契约和整页批量补全逻辑已统一。
 
 > [!warning] 实时热榜游标只近似稳定
-> 当前热榜仍按实时 `(liked DESC,id DESC)` 做 keyset pagination。`liked` 在翻页期间变化会让博客跨越游标边界，因此一次浏览可能漏项或重现。普通作者列表的 `create_time` 不变，不存在这个问题。要获得会话级稳定热榜，需要在得到 Redis 新键授权后发布“版本化 ID List 快照”，游标携带 `snapshotVersion + offset`；Redis 只保存可重建排名，不承载点赞关系真相。**热榜的模块归属（搜索/探索域）与演进路线见四、搜索域 4.4。**
+> 当前热榜仍按实时 `(liked DESC,id DESC)` 做 keyset pagination。`liked` 在翻页期间变化会让博客跨越游标边界，因此一次浏览可能漏项或重现。普通作者列表的 `create_time` 不变，不存在这个问题。要获得会话级稳定热榜，需要在得到 Redis 新键授权后发布“版本化 ID List 快照”，游标携带 `snapshotVersion + offset`；Redis 只保存可重建排名，不承载点赞关系真相。**热榜的模块归属（搜索/探索域）与演进路线见十、热榜与趋势。**
 
 ---
 
@@ -1898,7 +1898,7 @@ ShopTypeController
 2. 每种内容有独立搜索 Service；`BlogSearchService`、`UserSearchService` 不把 SQL 揉进统一编排函数。
 3. MySQL 是当前实现而不是接口合同；以后替换为 Elasticsearch/OpenSearch 适配器时，前端仍调用 `/search/**`。
 
-第四个成员也在本域：**榜单/趋势**（`GET /blog/hot`）。行业先例（Twitter Explore 的趋势长在实时搜索索引上，点击即搜索）说明"榜单"与"搜索"同属"发现"能力，本项目把它归入本域集中说明（详见 4.4），当前它仍由内容域 MySQL 查询实现。
+第四个成员也在本域：**榜单/趋势**（`GET /blog/hot`）。行业先例（Twitter Explore 的趋势长在实时搜索索引上，点击即搜索）说明"榜单"与"搜索"同属"发现"能力；其完整分析见独立章节 **十、热榜与趋势**，当前它仍由内容域 MySQL 查询实现。
 
 “一个输入框搜索多种内容”的第一阶段结构已经落地：
 
@@ -1934,13 +1934,13 @@ ShopTypeController
 
 ### 4.2 API 与兼容策略
 
-| 方法 | 端点 | 返回合同 | 用途 |
-|---|---|---|---|
-| GET | `/search?keyword=&scope=&current=&pageSize=` | `UnifiedSearchResultDTO` | 综合或指定 Tab 的跨域分组搜索 |
-| GET | `/search/shops?keyword=&current=` | `PageResultDTO<ShopSearchItemDTO>` | 新版店铺搜索主入口 |
-| GET | `/search/blogs?keyword=&current=&pageSize=` | `PageResultDTO<BlogCardDTO>` | 笔记 Tab 独立分页 |
-| GET | `/search/users?keyword=&current=&pageSize=` | `PageResultDTO<UserDTO>` | 用户 Tab 独立分页 |
-| GET | `/shop/of/name?name=&current=` | 旧式 `data[] + total` | `@Deprecated` 兼容入口，由 `SearchController` 接管 |
+| 方法  | 端点                                           | 返回合同                               | 用途                                         |
+| --- | -------------------------------------------- | ---------------------------------- | ------------------------------------------ |
+| GET | `/search?keyword=&scope=&current=&pageSize=` | `UnifiedSearchResultDTO`           | 综合或指定 Tab 的跨域分组搜索                          |
+| GET | `/search/shops?keyword=&current=`            | `PageResultDTO<ShopSearchItemDTO>` | 新版店铺搜索主入口                                  |
+| GET | `/search/blogs?keyword=&current=&pageSize=`  | `PageResultDTO<BlogCardDTO>`       | 笔记 Tab 独立分页                                |
+| GET | `/search/users?keyword=&current=&pageSize=`  | `PageResultDTO<UserDTO>`           | 用户 Tab 独立分页                                |
+| GET | `/shop/of/name?name=&current=`               | 旧式 `data[] + total`                | `@Deprecated` 兼容入口，由 `SearchController` 接管 |
 
 统一接口响应示例：
 
@@ -2022,42 +2022,7 @@ ORDER BY id ASC
 
 `DefaultUnifiedSearchService` 不分析关键词含义，而是执行可解释的确定性路由：scope 为空表示综合，依次调用三个域；scope 为 `BLOG` 时只调用笔记域。它将每页结果转换成 `SearchSectionDTO`，不跨域拍平，也不声称已经实现多业务统一相关度排序。
 
-### 4.4 热榜与趋势：为什么归属搜索/探索域
-
-#### 产品先例：趋势是实时搜索基础设施的产物
-
-2026-09-05 用真实登录会话在 x.com 上逐项验证（本资料的直接依据）：
-
-| 观察项 | 实际行为 |
-|---|---|
-| 趋势入口 | 「探索」→ 顶部五个 Tab：探索（For You）/ 当前趋势 / 新闻 / 体育 / 娱乐；「当前趋势」页 URL 为 `x.com/explore/tabs/trending` |
-| 榜单形态 | 排名编号 #1~#10，每个条目带分类（美国的趋势 / 生活风格趋势 / 游戏趋势）、话题标签和趋势相关词（如 Reddington → Supreme Judicial Court、最高法院），条目上还有「更多」菜单（不感兴趣等） |
-| 与搜索的联动 | **点击任一条趋势 = 跳转搜索**：实测点击 #1 后 URL 变为 `x.com/search?q=Supreme%20Judicial%20Court&src=trend_click&vertical=trends`，请求参数 `src=trend_click` 明示"趋势点击"。趋势榜单页顶部还有「全球趋势 · 最受欢迎的推文」横幅与搜索按钮 |
-| 搜索结果页 | 带垂直 Tab：热门（Top）/ 最新（Latest）/ 用户 / 媒体 / 列表；筛选面板含用户来源（任何人/你关注的人）、位置（任何地方/你的附近）、高级搜索；返回结果即命中推文时间线 |
-| 帖子量 | For You 卡片流中的趋势条目带帖子量（如「250多万」） |
-| 刷新行为（实测） | 2026-09-05 在同一会话内隔 4~5 分钟手动刷新「当前趋势」页：榜单 #1~#6（Reddington…）条目与顺序保持不变；同一时刻右侧「推荐关注」已整体换人、「X 上的直播」观看数实时变化（+2,696→+2,704）。即：**趋势条目是周期性快照，周边个性化组件是实时数据**——与"趋势约 5 分钟刷新一次"的公开 API 行为一致 |
-
-公开技术资料补充：Twitter 实时检索引擎 Earlybird（ICDE 2012）建在 Lucene 之上，推文发布后 10 秒内可检索；趋势对外 API 服务端约每 5 分钟刷新一次快照；相关查询/趋势统计论文（arXiv 1210.7350）给出约 5 分钟窗口是"实时反映大规模变化"的粒度甜点，趋势点击后紧接搜索查询链也被该论文证实。
-
-**结论：榜单/趋势与关键词搜索在同一"发现"能力域，共享检索基础设施。** 产品上是 Explore 的一个 Tab，技术上由实时索引聚合生成；因此本项目把热榜归入搜索/探索域（本小节），而不是内容域的查询功能。
-
-#### 本项目的现状
-
-- `GET /blog/hot`（`BlogQueryService.hot()`）按 `(liked DESC, id DESC)` 键集分页，数据直接来自 MySQL `tb_blog.liked`，与关键词检索**没有共同基础设施**（实现细节见 2.5 与 C 节；当前状态 🟡，跨页近似稳定，见 2.5 warning）。
-- 项目已具备搜索能力：`/search` 统一入口 + 店铺/博客/用户三个垂直域（4.1~4.3），但热榜**尚未**由搜索索引聚合生成——它现在只是"按赞数排序的查询端点"。
-
-#### 演进路线
-
-| 阶段 | 做法 | 说明 |
-|---|---|---|
-| V2 短期（推荐） | Redis 版本化 ID List 快照 | 游标携带 `snapshotVersion + offset`；Redis 只保存可重建排名，不承载点赞关系真相（MySQL 仍为权威）；同一会话内不重不漏 |
-| V3 趋势化 | 接入 Elasticsearch/OpenSearch 后由索引按热度窗口聚合 | 对标 Earlybird/Trends：排行榜与 `/search` 共享同一检索基础设施，可扩展"趋势词""趋势话题"等探索场景；周期性重算窗口约 5 分钟 |
-
-#### 与 2.2 Feed 分发的边界
-
-Feed（2.2）是**个性化分发**（召回-排序-曝光过滤，按用户态生成）；热榜是**全局热度分发**（单一维度的全站排序，全员共享同一榜单副本）。两者未来可共享 `strategy/ranking` 的排序策略能力，但通道不同、刷新策略不同：Feed 快照按用户缓存，热榜快照是全局唯一副本。
-
-### 4.5 当前能力边界与演进顺序
+### 4.4 当前能力边界与演进顺序
 
 当前准确状态是 **V1 搜索基础闭环已落地：三个垂直域 + 确定性统一编排 + Nuxt 分组结果页**：
 
@@ -2068,7 +2033,7 @@ Feed（2.2）是**个性化分发**（召回-排序-曝光过滤，按用户态�
 | 专用结果 DTO、`total/hasMore` | ✅ 已实现 |
 | 博客标题/正文搜索 | ✅ 已实现 MySQL 基线 |
 | 用户公开昵称搜索 | ✅ 已实现 MySQL 基线；敏感字段隔离 |
-| 热榜/趋势 | 🧱 当前为内容域 MySQL `liked` 排序（见 2.5）；归属搜索/探索域，V2 快照化、V3 趋势化见 4.4 |
+| 热榜/趋势 | 🧱 当前为内容域 MySQL `liked` 排序（见 2.5）；归属搜索/探索域，V2 快照化、V3 趋势化见十、热榜与趋势 |
 | 垂直搜索公共合同 | ✅ 三个平级垂直域已接入 `VerticalSearchService<T>` |
 | 跨类型统一后端接口 | ✅ `GET /search` 按 scope 确定性选路并分组 |
 | Nuxt 统一搜索结果页与 Tab | ✅ 综合、店铺、笔记、用户四个 Tab 已实现 |
@@ -2085,14 +2050,14 @@ Feed（2.2）是**个性化分发**（召回-排序-曝光过滤，按用户态�
 4. 关键词搜索稳定后再增加向量召回和重排；精确名称、过滤条件和语义理解采用混合检索，不使用纯向量替代全部搜索。
 5. 搜索引擎成为远程依赖后，再补索引同步、超时、部分降级、重建、别名切换和一致性监控。
 
-### 4.6 公开产品与技术资料给出的边界
+### 4.5 公开产品与技术资料给出的边界
 
 - 小红书公开页面协议将同一个搜索入口的目标明确分为 `notes/goods/users`，并区分自动补全、历史词、热搜词等来源。这说明“一个搜索框”与“多个垂直检索域”可以同时成立：关键词只输入一次，当前 Tab 或目标参数决定明确路由。本项目据此采用一个 `/search` 入口和 `SHOP/BLOG/USER` 三个平级域；当前不虚构自动意图模型。[小红书公开搜索页面协议](https://pages.xiaohongshu.com/activity/deeplink)
 - 大众点评公开实践把商户 POI 作为一个搜索文档，名称、类目、地址、菜品、团单和标签是同一文档的多个字段。因此本项目的 `SHOP` 是一个垂直域，店名、地址、类型等将来是域内检索字段，不应继续拆成新的 `SearchScope`。[大众点评搜索相关性实践](https://tech.meituan.com/2022/07/06/Semantic-Relevance-Matching.html)
 - 高德将搜索框输入提示 `Autocomplete` 与正式 POI 搜索 `PlaceSearch` 分开；正式 POI 搜索还能携带城市、类型、位置、范围等约束。因此本项目将 `SearchSuggestionService` 与完整搜索分成两个合同，并把城市/位置放入公共 `SearchQuery`。[高德输入提示与 POI 搜索](https://lbs.amap.com/api/javascript-api/guide/services/autocomplete)、[高德 POI 搜索 API](https://lbs.amap.com/api/webservice/guide/api/search/)
 - 美团公开文章说明，大搜会接入餐饮、到综、酒店旅游、外卖、商品等多个业务场景；查询改写控制召回文本，NER 控制检索域，意图识别影响业务分流和产品形态。因此“一个输入框”后面应是统一编排加多个垂直检索域，而不是让所有内容继承店铺搜索。[美团查询改写实践](https://tech.meituan.com/2022/02/17/Exploration-and-Practice-of-Query-Rewriting-in-Meituan-Search.html)
 - 美团多业务搜索还公开了多路业务召回、配额融合和精排的分层方式。由此可推导本项目未来由 `UnifiedSearchService` 负责多路选择与融合、`VerticalSearchService<T>` 只负责本域召回；这是结合公开方案做的架构映射，不代表美团内部使用了这些 Java 类名。[美团多业务搜索排序](https://tech.meituan.com/2021/07/08/Multi-Business-Modeling.html)
-- Twitter 把趋势（Trending）构建在实时搜索基础设施上：Earlybird 实时索引（ICDE 2012，推文 10 秒内可检索）；相关查询与趋势统计采用约 5 分钟窗口；产品上趋势挂在 Explore 且点击即搜索（`src=trend_click`，2026-09-05 实测）。这说明榜单与搜索同属一个"发现"域，本项目据此把热榜归属到本域（4.4）。[Earlybird: Real-Time Search at Twitter](https://cs.uwaterloo.ca/~jimmylin/publications/Busch_etal_ICDE2012.pdf)、[Twitter 相关查询架构（arXiv 1210.7350）](https://ar5iv.labs.arxiv.org/html/1210.7350)、[Twitter Trends API 分析](https://twitterapi.io/blog/twitter-trends-api-2026-guide)
+- Twitter 把趋势（Trending）构建在实时搜索基础设施上：Earlybird 实时索引（ICDE 2012，推文 10 秒内可检索）；相关查询与趋势统计采用约 5 分钟窗口；产品上趋势挂在 Explore 且点击即搜索（`src=trend_click`，2026-09-05 实测）。这说明榜单与搜索同属一个"发现"域，本项目据此把热榜归属到搜索/探索域（完整分析见独立章节十、热榜与趋势）。[Earlybird: Real-Time Search at Twitter](https://cs.uwaterloo.ca/~jimmylin/publications/Busch_etal_ICDE2012.pdf)、[Twitter 相关查询架构（arXiv 1210.7350）](https://ar5iv.labs.arxiv.org/html/1210.7350)、[Twitter Trends API 分析](https://twitterapi.io/blog/twitter-trends-api-2026-guide)
 
 ---
 
@@ -2601,6 +2566,47 @@ Feed（2.2）是**个性化分发**（召回-排序-曝光过滤，按用户态�
 - [Redis Streams](https://redis.io/docs/latest/develop/data-types/streams/)：可用于持久化事件、消费者组处理和待确认消息恢复，适合作为中小规模异步链路选项。
 - [OpenTelemetry](https://opentelemetry.io/docs/what-is-opentelemetry/)：统一采集 Trace、Metric 和 Log，建立跨组件可观测性。
 - [Kubernetes Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)：在应用无状态化后，可按资源或自定义指标自动调整实例数量。
+
+---
+
+## 十、热榜与趋势（独立章节）
+
+> 本章单独介绍热榜/趋势这一能力：产品先例、本项目现状、演进路线，以及与 Feed 分发的边界。
+> 归属说明：按 Twitter 的先例（趋势是实时搜索基础设施的聚合产物），热榜与关键词搜索同属"发现"能力域；
+> 但为了不动既有的章节编号（四、搜索域的 4.1~4.5 保持原样），本章独立成节，全文引用均指向这里。
+
+### 10.1 产品先例：趋势是实时搜索基础设施的产物
+
+2026-09-05 用真实登录会话在 x.com 上逐项验证（本资料的直接依据）：
+
+| 观察项 | 实际行为 |
+|---|---|
+| 趋势入口 | 「探索」→ 顶部五个 Tab：探索（For You）/ 当前趋势 / 新闻 / 体育 / 娱乐；「当前趋势」页 URL 为 `x.com/explore/tabs/trending` |
+| 榜单形态 | 排名编号 #1~#10，每个条目带分类（美国的趋势 / 生活风格趋势 / 游戏趋势）、话题标签和趋势相关词（如 Reddington → Supreme Judicial Court、最高法院），条目上还有「更多」菜单（不感兴趣等） |
+| 与搜索的联动 | **点击任一条趋势 = 跳转搜索**：实测点击 #1 后 URL 变为 `x.com/search?q=Supreme%20Judicial%20Court&src=trend_click&vertical=trends`，请求参数 `src=trend_click` 明示"趋势点击"。趋势榜单页顶部还有「全球趋势 · 最受欢迎的推文」横幅与搜索按钮 |
+| 搜索结果页 | 带垂直 Tab：热门（Top）/ 最新（Latest）/ 用户 / 媒体 / 列表；筛选面板含用户来源（任何人/你关注的人）、位置（任何地方/你的附近）、高级搜索；返回结果即命中推文时间线 |
+| 帖子量 | For You 卡片流中的趋势条目带帖子量（如「250多万」） |
+| 刷新行为（实测） | 2026-09-05 在同一会话内隔 4~5 分钟手动刷新「当前趋势」页：榜单 #1~#6（Reddington…）条目与顺序保持不变；同一时刻右侧「推荐关注」已整体换人、「X 上的直播」观看数实时变化（+2,696→+2,704）。即：**趋势条目是周期性快照，周边个性化组件是实时数据**——与"趋势约 5 分钟刷新一次"的公开 API 行为一致 |
+
+公开技术资料补充：Twitter 实时检索引擎 Earlybird（ICDE 2012）建在 Lucene 之上，推文发布后 10 秒内可检索；趋势对外 API 服务端约每 5 分钟刷新一次快照；相关查询/趋势统计论文（arXiv 1210.7350）给出约 5 分钟窗口是"实时反映大规模变化"的粒度甜点，趋势点击后紧接搜索查询链也被该论文证实。
+
+**结论：榜单/趋势与关键词搜索在同一"发现"能力域，共享检索基础设施。** 产品上是 Explore 的一个 Tab，技术上由实时索引聚合生成；因此本项目把热榜归入搜索/探索域（归属逻辑详见 10.2），而不是内容域的查询功能。
+
+### 10.2 本项目现状
+
+- `GET /blog/hot`（`BlogQueryService.hot()`）按 `(liked DESC, id DESC)` 键集分页，数据直接来自 MySQL `tb_blog.liked`，与关键词检索**没有共同基础设施**（实现细节见 2.5 与 C 节；当前状态 🟡，跨页近似稳定，见 2.5 warning）。
+- 项目已具备搜索能力：`/search` 统一入口 + 店铺/博客/用户三个垂直域（4.1~4.3），但热榜**尚未**由搜索索引聚合生成——它现在只是"按赞数排序的查询端点"。
+
+### 10.3 演进路线
+
+| 阶段 | 做法 | 说明 |
+|---|---|---|
+| V2 短期（推荐） | Redis 版本化 ID List 快照 | 游标携带 `snapshotVersion + offset`；Redis 只保存可重建排名，不承载点赞关系真相（MySQL 仍为权威）；同一会话内不重不漏 |
+| V3 趋势化 | 接入 Elasticsearch/OpenSearch 后由索引按热度窗口聚合 | 对标 Earlybird/Trends：排行榜与 `/search` 共享同一检索基础设施，可扩展"趋势词""趋势话题"等探索场景；周期性重算窗口约 5 分钟 |
+
+### 10.4 与 2.2 Feed 分发的边界
+
+Feed（2.2）是**个性化分发**（召回-排序-曝光过滤，按用户态生成）；热榜是**全局热度分发**（单一维度的全站排序，全员共享同一榜单副本）。两者未来可共享 `strategy/ranking` 的排序策略能力，但通道不同、刷新策略不同：Feed 快照按用户缓存，热榜快照是全局唯一副本。
 
 ---
 
