@@ -11,9 +11,10 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 
 /**
- * <p>
- * 
- * </p>
+ * 优惠券订单实体，对应数据库表 tb_voucher_order，主键由应用侧写入（IdType.INPUT）。
+ *
+ * 主要使用方：VoucherOrderMapper；当前仅被空壳实现 VoucherOrderServiceImpl 继承注册，
+ * 没有 Controller 或业务代码读写，消费者抢券下单链路尚未实现。
  *
  * @author 虎哥
  * @since 2021-12-22
@@ -27,7 +28,7 @@ public class VoucherOrder implements Serializable {
     private static final long serialVersionUID = 1L;
 
     /**
-     * 主键
+     * 主键，由应用侧生成后写入（非数据库自增）
      */
     @TableId(value = "id", type = IdType.INPUT)
     private Long id;

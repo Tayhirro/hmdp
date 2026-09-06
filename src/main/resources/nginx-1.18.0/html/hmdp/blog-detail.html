@@ -53,7 +53,7 @@
       </div>
 
     </div>
-    <div class="blog-text" v-html="blog.content">
+    <div class="blog-text" v-text="blog.content" style="white-space: pre-wrap;">
     </div>
     <div class="shop-basic">
       <div class="shop-icon">
@@ -168,6 +168,7 @@
       likes: [],
       user: {}, // 登录用户
       followed: false, // 是否关注了
+      likePending: false,
       _width: 0,
       duration: 300,
       container: null,
@@ -230,23 +231,28 @@
       },
       queryLikeList(id){
         axios.get("/blog/likes/" + id)
-          .then(({data}) => this.likes = data)
+          .then(({data}) => this.likes = data.list)
           .catch(this.$message.error)
       },
       addLike(){
-        axios.put("/blog/like/" +this.blog.id)
+        if (this.likePending) {
+          return;
+        }
+        this.likePending = true;
+        const request = this.blog.isLike
+          ? axios.delete("/blog/" + this.blog.id + "/like")
+          : axios.put("/blog/" + this.blog.id + "/like")
+        request
           .then(({data}) => {
-            axios.get("/blog/" + this.blog.id)
-              .then(({data}) => {
-                data.images = data.images.split(",")
-                this.blog = data;
-                this.queryLikeList(this.blog.id);
-              })
-              .catch(this.$message.error)
+            this.blog.isLike = data.liked;
+            this.blog.liked = data.likeCount;
+            this.queryLikeList(this.blog.id);
           })
           .catch(err => {
             this.$message.error(err)
+            this.queryBlogById(this.blog.id)
           })
+          .finally(() => this.likePending = false)
       },
       isFollowed(){
         axios.get("/follow/or/not/" + this.blog.userId)

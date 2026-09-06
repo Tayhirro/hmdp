@@ -12,9 +12,10 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 
 /**
- * <p>
- * 
- * </p>
+ * 商铺类型实体，对应数据库表 tb_shop_type（美食、KTV 等分类）。
+ *
+ * 主要使用方：ShopTypeMapper、ShopTypeServiceImpl；ShopTypeController.queryTypeList
+ * 按 sort 升序返回全部分类（GET /shop-type/list），Shop.typeId 关联本表主键。
  *
  * @author 虎哥
  * @since 2021-12-22

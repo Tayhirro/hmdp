@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS `tb_blog_image` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '图片资产ID',
+  `user_id` bigint(20) UNSIGNED NOT NULL COMMENT '上传用户ID',
+  `blog_id` bigint(20) UNSIGNED NULL DEFAULT NULL COMMENT '绑定的博客ID',
+  `storage_key` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT '存储层内部路径',
+  `public_url` varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT '公开访问地址',
+  `content_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '服务端识别的图片类型',
+  `file_size` bigint(20) UNSIGNED NOT NULL COMMENT '文件大小（字节）',
+  `width` int(10) UNSIGNED NOT NULL COMMENT '图片宽度',
+  `height` int(10) UNSIGNED NOT NULL COMMENT '图片高度',
+  `status` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'TEMP' COMMENT 'TEMP/BOUND/DELETING',
+  `sort_order` tinyint(3) UNSIGNED NULL DEFAULT NULL COMMENT '博客内图片顺序',
+  `bind_time` timestamp NULL DEFAULT NULL COMMENT '绑定博客时间',
+  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE KEY `uk_blog_image_storage_key` (`storage_key`) USING BTREE,
+  KEY `idx_blog_image_owner_status` (`user_id`, `status`) USING BTREE,
+  KEY `idx_blog_image_status_created` (`status`, `create_time`) USING BTREE,
+  KEY `idx_blog_image_blog_order` (`blog_id`, `sort_order`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '博客图片资产';

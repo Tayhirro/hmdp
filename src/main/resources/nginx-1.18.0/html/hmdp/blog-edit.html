@@ -19,30 +19,30 @@
     <div class="header-cancel-btn" @click="goBack">取消</div>
     <div class="header-title">&nbsp;&nbsp;发笔记<i class="el-icon-info"></i></div>
     <div class="header-commit">
-      <div class="header-commit-btn" @click="submitBlog">发布</div>
+      <div class="header-commit-btn" @click="submitBlog">{{publishButtonText}}</div>
     </div>
   </div>
   <div class="upload-box">
-    <input type="file" @change="fileSelected" name="file" ref="fileInput" style="display: none">
+    <input type="file" @change="fileSelected" name="file" ref="fileInput" :disabled="publishing" style="display: none">
     <div class="upload-btn" @click="openFileDialog">
       <i class="el-icon-camera"></i>
       <div style="font-size: 12px;line-height: 12px">上传照片</div>
     </div>
     <div class="pic-list">
       <div class="pic-box" v-for="(f,i) in fileList" :key="i">
-        <img :src="f" alt="">
+        <img :src="f.url" alt="">
         <i class="el-icon-close" @click="deletePic(i)"></i>
       </div>
     </div>
   </div>
   <div class="blog-title">
-    <input v-model="params.title" type="text" placeholder="填写标题更容易上首页哦~">
+    <input v-model="params.title" :disabled="publishing" type="text" placeholder="填写标题更容易上首页哦~">
   </div>
   <div class="blog-content">
-    <textarea v-model="params.content" placeholder="最近打卡了什么地方，有什么新奇体验呢？"></textarea>
+    <textarea v-model="params.content" :disabled="publishing" placeholder="最近打卡了什么地方，有什么新奇体验呢？"></textarea>
   </div>
   <div class="divider"></div>
-  <div class="blog-shop" @click="showDialog=true">
+  <div class="blog-shop" @click="openShopDialog">
     <div class="shop-left">关联商户</div>
     <div v-if="selectedShop.name">{{selectedShop.name}}</div>
     <div v-else>去选择&nbsp;<i class="el-icon-arrow-right"></i></div>
@@ -78,13 +78,34 @@
 <script src="./js/footer.js"></script>
 <script>
 
+  // 发布写请求需要区分“服务端明确拒绝”和“网络中断、结果未知”，因此不使用 common.js
+  // 会把所有异常压成字符串的全局响应拦截器。
+  const blogWriteClient = axios.create({
+    baseURL: util.commonURL,
+    timeout: 5000
+  });
+  blogWriteClient.interceptors.request.use(config => {
+    const currentToken = sessionStorage.getItem("token");
+    if (currentToken) {
+      config.headers["authorization"] = currentToken;
+    }
+    return config;
+  });
+
   const app = new Vue({
     el: "#app",
     data() {
       return {
         util,
         fileList: [], // 文件列表
-        params: {},
+        params: {
+          title: "",
+          content: ""
+        },
+        publishing: false,
+        publishState: "EDITING",
+        pendingPublish: null,
+        confirmedBlogId: null,
         showDialog: false, //
         shops: [], // 商户信息
         shopName: "", //商户名称
@@ -95,6 +116,20 @@
       this.checkLogin();
       this.queryShops();
     },
+    computed: {
+      publishButtonText() {
+        if (this.publishing) {
+          return "处理中...";
+        }
+        if (this.confirmedBlogId) {
+          return "保存最新修改";
+        }
+        if (this.publishState === "UNKNOWN") {
+          return "确认并发布";
+        }
+        return "发布";
+      }
+    },
     methods: {
       queryShops() {
         axios.get("/shop/of/name?name=" + this.shopName)
@@ -102,34 +137,235 @@
           .catch(this.$message.error)
       },
       selectShop(s) {
+        if (this.publishing) {
+          return;
+        }
         this.selectedShop = s;
         this.showDialog = false;
       },
-      submitBlog() {
-        let {...data} = this.params;
-        data.images = this.fileList.join(",");
-        data.shopId = this.selectedShop.id;
-        axios.post("/blog", data)
-          .then(resp => location.href = "/info.html")
-          .catch(this.$message.error)
+      openShopDialog() {
+        if (!this.publishing) {
+          this.showDialog = true;
+        }
+      },
+
+      /**
+       * 发布恢复的核心要点：
+       * 1. 第一次点击时冻结 payload A 和 clientRequestId；结果未知时绝不能拿修改后的 B
+       *    直接创建，否则 A 已落库时会再产生一篇 B。
+       * 2. 再次点击先重放“原 key + 原快照 A”找回首次 blogId；拿到 ID 后，若当前
+       *    表单已经变成 B，再通过 PUT /blog/{id} 把同一篇博客更新到 B。
+       * 3. POST 的 4xx 表示服务端明确拒绝，可以放弃旧快照；超时、断网和 5xx 的
+       *    提交结果不确定，必须保留旧快照继续确认。PUT 结果不确定时可重放目标状态。
+       * 4. 发布结果未收敛期间，删除原快照图片只改当前页面，不调用 TEMP 删除接口；
+       *    等 blogId 确认后统一由 PUT 计算图片差异，避免误删已被首次请求绑定的图片。
+       *
+       * 对应真实场景：
+       * 1. 双击或原内容重试：A -> A，数据库唯一键只创建一次，直接返回首次 ID。
+       * 2. 后端已创建但响应丢失：前端重放 A，拿回首次 ID，不会创建第二篇。
+       * 3. 响应丢失后用户改成 B：先用 A 找回 ID，再 PUT B；最终只有一篇且内容为 B。
+       * 4. 首次请求被明确校验拒绝：清除 A，用户修正后以新的 key 发起新的创建意图。
+       */
+      async submitBlog() {
+        if (this.publishing || !this.validateBlog()) {
+          return;
+        }
+        this.publishing = true;
+        try {
+          const desiredPayload = this.buildBlogPayload();
+
+          // 已拿到首次 blogId：后续操作是对同一资源做目标状态更新，不再执行第二次创建。
+          if (this.confirmedBlogId) {
+            await this.requestBlogWrite("put", "/blog/" + this.confirmedBlogId, desiredPayload);
+            this.finishPublish();
+            return;
+          }
+
+          if (!this.pendingPublish) {
+            this.pendingPublish = this.createPendingPublish(desiredPayload);
+          }
+
+          // 无论当前表单是否已经修改，都先原样重放第一次点击时冻结的请求。
+          const blogId = await this.requestBlogWrite("post", "/blog", this.pendingPublish.payload);
+          if (!blogId) {
+            const missingId = new Error("服务端未返回博客 ID");
+            missingId.outcomeUnknown = true;
+            throw missingId;
+          }
+          this.confirmedBlogId = blogId;
+          this.publishState = "CREATED";
+
+          // POST 等待期间禁止编辑；网络失败放开页面后，用户的修改会在下一次点击时走这里。
+          const latestPayload = this.buildBlogPayload();
+          if (this.fingerprint(latestPayload) !== this.pendingPublish.fingerprint) {
+            await this.requestBlogWrite("put", "/blog/" + blogId, latestPayload);
+          }
+          this.finishPublish();
+        } catch (error) {
+          this.handlePublishError(error);
+        } finally {
+          this.publishing = false;
+        }
+      },
+      buildBlogPayload() {
+        return {
+          title: this.params.title,
+          content: this.params.content,
+          imageIds: this.fileList.map(file => file.id),
+          shopId: this.selectedShop.id
+        };
+      },
+      createPendingPublish(payload) {
+        const snapshot = JSON.parse(JSON.stringify(payload));
+        snapshot.clientRequestId = this.newClientRequestId();
+        return {
+          payload: snapshot,
+          fingerprint: this.fingerprint(payload)
+        };
+      },
+      fingerprint(payload) {
+        return JSON.stringify(payload);
+      },
+      async requestBlogWrite(method, url, data) {
+        try {
+          const response = await blogWriteClient.request({method, url, data});
+          const body = response.data || {};
+          if (!body.success) {
+            const rejected = new Error(body.errorMsg || "请求失败");
+            rejected.status = response.status;
+            rejected.errorCode = body.errorCode;
+            rejected.outcomeUnknown = false;
+            throw rejected;
+          }
+          return body.data;
+        } catch (error) {
+          if (typeof error.outcomeUnknown === "boolean") {
+            throw error;
+          }
+          const response = error && error.response;
+          const status = response && response.status;
+          const body = response && response.data;
+          const normalized = new Error(
+            body && body.errorMsg ? body.errorMsg : "网络或服务器异常"
+          );
+          normalized.status = status || null;
+          normalized.errorCode = body && body.errorCode;
+          // 无响应、请求超时、408 和 5xx 都不能证明事务没有提交，按“结果未知”处理。
+          normalized.outcomeUnknown = !response || status === 408 || status >= 500;
+          throw normalized;
+        }
+      },
+      handlePublishError(error) {
+        const message = error && error.message ? error.message : "发布失败";
+
+        if (this.confirmedBlogId) {
+          this.publishState = "CREATED";
+          this.$message.error(
+            error.outcomeUnknown
+              ? "博客已经创建，最新修改结果暂时无法确认；请再次点击保存最新修改"
+              : "博客已经创建，但最新修改未保存：" + message
+          );
+          return;
+        }
+
+        if (error.outcomeUnknown) {
+          this.publishState = "UNKNOWN";
+          this.$message.error(
+            "发布结果暂时无法确认。你可以继续修改；再次点击时会先确认原发布，再保存最新内容"
+          );
+          return;
+        }
+
+        if (error.status === 401) {
+          this.pendingPublish = null;
+          this.publishState = "EDITING";
+          this.$message.error("登录状态已失效，请重新登录");
+          setTimeout(() => location.href = "/login.html", 200);
+          return;
+        }
+
+        if (error.status === 409 || error.errorCode === "IDEMPOTENCY_KEY_REUSED") {
+          this.publishState = "CONFLICT";
+          this.$message.error("发布状态冲突，请刷新页面后确认已发布内容");
+          return;
+        }
+
+        // 明确的 4xx 表示创建没有进入未知状态，修正表单后应开始新的发布意图。
+        this.pendingPublish = null;
+        this.publishState = "EDITING";
+        this.$message.error(message);
+      },
+      finishPublish() {
+        this.pendingPublish = null;
+        this.confirmedBlogId = null;
+        this.publishState = "DONE";
+        location.href = "/info.html";
+      },
+      hasUnsettledPublish() {
+        return !!this.pendingPublish || !!this.confirmedBlogId;
+      },
+      newClientRequestId() {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+          return window.crypto.randomUUID();
+        }
+        return Date.now().toString(36) + "_" + Math.random().toString(36).slice(2);
+      },
+      validateBlog() {
+        if (!this.params.title || !this.params.title.trim()) {
+          this.$message.error("请填写标题");
+          return false;
+        }
+        if (!this.params.content || !this.params.content.trim()) {
+          this.$message.error("请填写正文");
+          return false;
+        }
+        if (!this.selectedShop.id) {
+          this.$message.error("请选择关联商户");
+          return false;
+        }
+        if (this.fileList.length === 0) {
+          this.$message.error("请至少上传一张图片");
+          return false;
+        }
+        if (this.fileList.length > 9) {
+          this.$message.error("最多上传9张图片");
+          return false;
+        }
+        return true;
       },
       openFileDialog() {
+        if (this.publishing) {
+          return;
+        }
+        if (this.fileList.length >= 9) {
+          this.$message.error("最多上传9张图片");
+          return;
+        }
         this.$refs.fileInput.click();
       },
       fileSelected() {
         let file = this.$refs.fileInput.files[0];
+        if (!file) {
+          return;
+        }
         let formData = new FormData();
         formData.append("file", file);
-        const config = {
-          headers: {"Content-Type": "multipart/form-data;boundary=" + new Date().getTime()}
-        };
         axios
-          .post("/upload/blog", formData, config)
-          .then(({data}) => this.fileList.push('/imgs' + data))
-          .catch(this.$message.error);
+          .post("/upload/blog", formData, {timeout: 15000})
+          .then(({data}) => this.fileList.push(data))
+          .catch(this.$message.error)
+          .then(() => this.$refs.fileInput.value = "");
       },
       deletePic(i) {
-        axios.get("/upload/blog/delete?name=" + this.fileList[i])
+        if (this.publishing) {
+          return;
+        }
+        // 原请求可能已经把图片变成 BOUND；先只修改期望列表，确认 blogId 后由 PUT 安全解绑。
+        if (this.hasUnsettledPublish()) {
+          this.fileList.splice(i, 1);
+          return;
+        }
+        axios.delete("/upload/blog/" + this.fileList[i].id)
           .then(() => this.fileList.splice(i, 1))
           .catch(this.$message.error)
       },
@@ -148,6 +384,10 @@
           })
       },
       goBack() {
+        if (this.hasUnsettledPublish()
+          && !window.confirm("发布结果尚未确认，离开后可能无法继续自动收敛到最新内容。确定离开吗？")) {
+          return;
+        }
         history.back();
       },
       handleRemove(file) {

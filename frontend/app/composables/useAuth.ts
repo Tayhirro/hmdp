@@ -13,7 +13,8 @@ export function useAuth() {
   const { $apiData } = useNuxtApp()
 
   const token = useCookie<string | null>('hmdp_token', { sameSite: 'lax' })
-  const user = ref<UserDTO | null>(null)
+  // 全局认证状态必须跨页面、布局和菜单共享；普通 ref 会让每次调用 useAuth() 都得到不同用户对象。
+  const user = useState<UserDTO | null>('auth_user', () => null)
   if (import.meta.client) {
     console.warn('[auth][client] composable initialized', {
       dev: import.meta.dev
@@ -59,7 +60,7 @@ export function useAuth() {
   }
 
   async function sendCode(phone: string) {
-    await $apiData<void>(`/user/code?phone=${encodeURIComponent(phone)}`, { method: 'POST' })
+    await $apiData<unknown>(`/user/code?phone=${encodeURIComponent(phone)}`, { method: 'POST' })
   }
 
   async function login(form: LoginFormDTO) {
@@ -91,11 +92,11 @@ export function useAuth() {
   }
 
   async function signup(form: LoginFormDTO) {
-    const response = await $apiData<any>('/user/signup', {
+    const response = await $apiData<unknown>('/user/signup', {
       method: 'POST',
       body: form
     })
-    
+
     // 如果返回的是 token（string），说明是完整注册（手机号注册或带手机号的账号注册）
     if (typeof response === 'string') {
       token.value = response
@@ -103,19 +104,19 @@ export function useAuth() {
       await fetchMe().catch(() => null)
       return { success: true, token: response, requiresPhoneBinding: false }
     }
-    
+
     // 第一阶段账号注册：后端返回 object（避免和 token 字符串冲突）
     if (isObject(response) && response.requiresPhoneBinding === true) {
       return { success: true, token: null, requiresPhoneBinding: true }
     }
-    
+
     // 其他情况
     return { success: false, token: null, requiresPhoneBinding: false }
   }
 
   async function logout() {
     try {
-      await $apiData<void>('/user/logout', { method: 'POST' })
+      await $apiData<unknown>('/user/logout', { method: 'POST' })
     } finally {
       token.value = null
       user.value = null

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper;
 import com.hmdp.dto.LoginFormDTO;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.User;
+import com.hmdp.service.IUserInfoService;
 import com.hmdp.sms.SmsSender;
 import cn.hutool.crypto.digest.BCrypt;
 import org.junit.jupiter.api.Test;
@@ -54,6 +55,9 @@ class UserServiceImplTest {
 
     @Mock
     private SmsSender smsSender;
+
+    @Mock
+    private IUserInfoService userInfoService;
 
     @Mock
     private QueryChainWrapper<User> queryChainWrapper;

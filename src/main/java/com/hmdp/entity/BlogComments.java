@@ -11,9 +11,11 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 
 /**
- * <p>
- * 
- * </p>
+ * 博客评论实体，对应数据库表 tb_blog_comments。
+ *
+ * 通过 parent_id 和 answer_id 构成两级评论树：一级评论两个字段均为 0，回复指向所属一级评论和被回复评论。
+ * 主要使用方：BlogCommentsMapper、BlogCommentsServiceImpl（创建、游标查询、删除评论）、
+ * BlogCommandService.delete（删除博客时按 blog_id 级联删除全部评论）。
  *
  * @author 虎哥
  * @since 2021-12-22
@@ -65,7 +67,7 @@ public class BlogComments implements Serializable {
     /**
      * 状态，0：正常，1：被举报，2：禁止查看
      */
-    private Boolean status;
+    private Integer status;
 
     /**
      * 创建时间

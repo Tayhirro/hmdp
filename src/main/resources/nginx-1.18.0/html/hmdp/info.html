@@ -110,11 +110,12 @@
       blogs: [],
       blogs2: [], // 关注的人的播客
       params: {
-        minTime: 0, // 上一次拉取到的时间戳
-        offset: 0, // 偏移量
+        cursor: null, // 客户端只原样回传，不解析排序边界
+        hasMore: true,
       },
       count: 5,
       isReachBottom: false,
+      pendingLikeIds: {},
     },
     created() {
       this.queryUser();
@@ -125,26 +126,25 @@
       },
       queryBlogs() {
         axios.get("/blog/of/me")
-          .then(({data}) => this.blogs = data)
+          .then(({data}) => this.blogs = data.list)
           .catch(this.$message.error)
       },
       queryBlogsOfFollow(clear) {
         if (clear) {
-          this.params.offset = 0;
-          this.params.minTime = new Date().getTime() + 1;
+          this.params = {cursor: null, hasMore: true};
         }
-        let {minTime, offset: os} = this.params;
-        axios.get("/blog/of/follow", {
-            params: {offset: os, lastId: minTime || new Date().getTime() + 1}
+        let {cursor} = this.params;
+        axios.get("/blog/feed", {
+            params: {cursor, mode: "following", refresh: Boolean(clear)}
           })
           .then(({data}) => {
             if (!data) {
               return;
             }
-            let {list, ...params} = data;
+            let {list, nextCursor, hasMore} = data;
             list.forEach(b => b.img = b.images.split(",")[0])
             this.blogs2 = clear ? list : this.blogs2.concat(list);
-            this.params = params;
+            this.params = {cursor: nextCursor || null, hasMore};
           })
           .catch(e => console.log(e))
       },
@@ -200,13 +200,23 @@
         }
       },
       addLike(b) {
-        axios.put("/blog/like/" + b.id)
+        if (this.pendingLikeIds[b.id]) {
+          return;
+        }
+        this.$set(this.pendingLikeIds, b.id, true);
+        const request = b.isLike
+          ? axios.delete("/blog/" + b.id + "/like")
+          : axios.put("/blog/" + b.id + "/like")
+        request
           .then(({data}) => {
-            this.queryBlogById(b);
+            b.isLike = data.liked;
+            b.liked = data.likeCount;
           })
           .catch(err => {
             this.$message.error(err)
+            this.queryBlogById(b)
           })
+          .finally(() => this.$delete(this.pendingLikeIds, b.id))
       },
       queryBlogById(b) {
         axios.get("/blog/" + b.id)
@@ -214,10 +224,7 @@
             b.liked = data.liked;
             b.isLike = data.isLike;
           })
-          .catch(() => {
-            this.$message.error
-            b.liked++;
-          })
+          .catch(() => this.$message.error("点赞状态同步失败"))
       },
       onScroll(e) {
         let scrollTop = e.target.scrollTop;

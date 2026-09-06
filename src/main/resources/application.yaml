@@ -3,11 +3,15 @@ server:
 spring:
   application:
     name: hmdp
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://127.0.0.1:3306/hmdp?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
-    username: root
-    password: 123456
+    url: ${HMDP_DB_URL:jdbc:mysql://127.0.0.1:3306/hmdp?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
+    username: ${HMDP_DB_USERNAME:root}
+    password: ${HMDP_DB_PASSWORD:}
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -15,9 +19,9 @@ spring:
     # 让已有库（已经有表但还没用过 Flyway）能“接入”而不去执行 V1
     baseline-version: 1
   redis:
-    host: 127.0.0.1
-    port: 6739
-    password:
+    host: ${HMDP_REDIS_HOST:127.0.0.1}
+    port: ${HMDP_REDIS_PORT:6379}
+    password: ${HMDP_REDIS_PASSWORD:}
     lettuce:
       pool:
         max-active: 10
@@ -38,8 +42,21 @@ hmdp:
     # auth.method 支持：auto（默认：jwt -> redis-token -> session）或逗号分隔优先级列表（例如：jwt,redis-token）
     method: redis-token
     jwt:
-      # HS256 secret（示例：至少 32 位随机字符串），为空则 JWT 解析器不生效
-      secret: "123456"
+      # 不提供开发默认密钥；为空时 JWT 解析器不生效。
+      secret: ${HMDP_JWT_SECRET:}
+  upload:
+    root: ${HMDP_UPLOAD_ROOT:./data/uploads}
+    public-prefix: /imgs/
+    max-bytes: 5242880
+    max-width: 10000
+    max-height: 10000
+    max-pixels: 40000000
+    temp-retention-hours: 24
+    cleanup-batch-size: 100
+    cleanup-interval-ms: 3600000
+    deleting-retry-delay-minutes: 5
+  idempotency:
+    cleanup-interval-ms: 86400000
 logging:
   level:
     com.hmdp: debug

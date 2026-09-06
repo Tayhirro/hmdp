@@ -65,7 +65,9 @@
       isReachBottom: false,
       types: [], // 类型列表
       blogs: [], // 播客列表
-      current: 1,// blog的页码
+      hotCursor: null,
+      hotHasMore: true,
+      pendingLikeIds: {},
     },
     created() {
       // 查询类型
@@ -83,23 +85,38 @@
           })
       },
       queryHotBlogsScroll() {
-        axios.get("/blog/hot?current=" + this.current)
+        if (!this.hotHasMore) {
+          return;
+        }
+        axios.get("/blog/hot", {params: {cursor: this.hotCursor, limit: 10}})
           .then(({data}) => {
-            data.forEach(b => b.img = b.images.split(",")[0]);
-            this.blogs = this.blogs.concat(data);
+            data.list.forEach(b => b.img = b.images.split(",")[0]);
+            this.blogs = this.blogs.concat(data.list);
+            this.hotCursor = data.nextCursor || null;
+            this.hotHasMore = data.hasMore;
           })
           .catch(err => {
             this.$message.error(err)
           })
       },
       addLike(b) {
-        axios.put("/blog/like/" +b.id)
+        if (this.pendingLikeIds[b.id]) {
+          return;
+        }
+        this.$set(this.pendingLikeIds, b.id, true);
+        const request = b.isLike
+          ? axios.delete("/blog/" + b.id + "/like")
+          : axios.put("/blog/" + b.id + "/like")
+        request
           .then(({data}) => {
-            this.queryBlogById(b)
+            b.isLike = data.liked;
+            b.liked = data.likeCount;
           })
           .catch(err => {
             this.$message.error(err)
+            this.queryBlogById(b)
           })
+          .finally(() => this.$delete(this.pendingLikeIds, b.id))
       },
       queryBlogById(b) {
         axios.get("/blog/" + b.id)
@@ -107,10 +124,7 @@
             b.liked = data.liked;
             b.isLike = data.isLike;
           })
-          .catch(() => {
-            this.$message.error
-            b.liked ++;
-          })
+          .catch(() => this.$message.error("点赞状态同步失败"))
       },
       onScroll(e) {
         let scrollTop = e.target.scrollTop;
@@ -119,8 +133,6 @@
         if (scrollTop + offsetHeight > scrollHeight && !this.isReachBottom) {
           this.isReachBottom = true
 
-          // 再次查询下一页数据
-          this.current++;
           this.queryHotBlogsScroll();
         } else {
           this.isReachBottom = false

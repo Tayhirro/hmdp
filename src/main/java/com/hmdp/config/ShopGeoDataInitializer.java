@@ -27,6 +27,17 @@ public class ShopGeoDataInitializer {
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
+    /**
+     * 应用启动时把 MySQL 全量店铺数据预热到 Redis GEO。
+     *
+     * 使用场景：Spring 启动时（依赖注入完成后）由 {@code @PostConstruct} 自动执行一次，
+     * 为「附近店铺」查询（{@link com.hmdp.service.impl.ShopServiceImpl}（店铺服务实现）按
+     * shop:geo:{typeId} 做 GEO 检索）准备数据。
+     * 关键操作：shopService.list() 全量读 tb_shop 表（数据库），按 typeId 分组后逐组
+     * 写 Redis GEO，key = "shop:geo:" + 店铺类型 id（常量 SHOP_GEO_KEY 拼 typeId），
+     * member = 店铺 id 字符串，坐标 Point(x, y)（x 为经度、y 为纬度）；无 TTL。
+     * 表为空时仅打日志跳过；重复启动会对同 key 重复 add（GEO 底层 ZSet 同 member 覆盖坐标，幂等）。
+     */
     @PostConstruct
     public void loadShopGeoData() {
         List<Shop> shops = shopService.list();

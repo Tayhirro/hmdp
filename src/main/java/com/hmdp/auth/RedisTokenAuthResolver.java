@@ -26,10 +26,34 @@ public class RedisTokenAuthResolver implements AuthResolver {
     private static final Logger log = LoggerFactory.getLogger(RedisTokenAuthResolver.class);
 
     private final StringRedisTemplate stringRedisTemplate;
+
+    /**
+     * 注入 Redis 操作模板。
+     *
+     * 使用场景：Spring 启动时由 {@link com.hmdp.config.AuthResolverConfig}（认证解析器装配配置类）的
+     * redisTokenAuthResolver 方法创建本 bean 时调用。
+     *
+     * @param stringRedisTemplate Spring Boot 自动配置的 StringRedisTemplate
+     */
     public RedisTokenAuthResolver(StringRedisTemplate stringRedisTemplate) {
         this.stringRedisTemplate = stringRedisTemplate;
     }
 
+    /**
+     * 用请求头中的 token 查 Redis，还原当前登录用户并续期。
+     *
+     * 使用场景：每次 HTTP 请求由 {@link CompositeAuthResolver}（组合解析器）调用；
+     * application.yaml 当前配置 hmdp.auth.method=redis-token，即线上实际只走本解析器。
+     * token 的写入方是 UserServiceImpl 登录成功时（key 同下）。
+     * 流程：取 header authorization，剥离可选 "Bearer " 前缀（忽略大小写）；
+     * 含 '.' 的 token 视为 JWT 直接放弃；查 Redis Hash，key = "login:token:" + token
+     * （常量 LOGIN_USER_KEY 拼接 token），无数据返回 null；命中则用 Hutool
+     * BeanUtil.fillBeanWithMap 还原 {@link UserDTO}（用户 DTO），并把该 key 的 TTL 重置为
+     * LOGIN_USER_TTL = 36000 秒（10 小时，实现活跃用户续期）。
+     *
+     * @param request 当前 HTTP 请求
+     * @return Redis 中已登录的 {@link UserDTO}；未登录或 token 失效返回 null
+     */
     @Override
     @Nullable
     public UserDTO resolve(HttpServletRequest request) {

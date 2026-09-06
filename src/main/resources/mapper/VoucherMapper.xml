@@ -2,6 +2,11 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.hmdp.mapper.VoucherMapper">
 
+    <!-- 查询店铺的上架优惠券：tb_voucher 别名 v 左联 tb_seckill_voucher 别名 sv（ON v.id = sv.voucher_id），
+         WHERE v.shop_id 等于参数 shopId 且 v.status = 1（仅上架）；
+         SELECT 返回 v 表的 id、shop_id、title、sub_title、rules、pay_value、actual_value、type，
+         以及 sv 表的 stock、begin_time、end_time（秒杀券才有值，普通券为空）。
+         调用方：VoucherMapper.queryVoucherOfShop，由 VoucherServiceImpl.queryVoucherOfShop（GET /voucher/list/{shopId}）触发。 -->
     <select id="queryVoucherOfShop" resultType="com.hmdp.entity.Voucher" parameterType="java.lang.Long">
         SELECT
             v.`id`, v.`shop_id`, v.`title`, v.`sub_title`, v.`rules`, v.`pay_value`,

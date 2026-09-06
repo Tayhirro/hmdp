@@ -2,7 +2,10 @@
 
 // Nuxt typecheck (tsconfig.node.json) intentionally omits Node globals types.
 // Read env vars without referencing `process` directly.
-const env = ((globalThis as any).process?.env || {}) as Record<string, string | undefined>
+const runtimeProcess = (globalThis as typeof globalThis & {
+  process?: { env?: Record<string, string | undefined> }
+}).process
+const env = runtimeProcess?.env ?? {}
 
 export default defineNuxtConfig({
   modules: [
@@ -10,16 +13,15 @@ export default defineNuxtConfig({
     '@nuxt/ui'
   ],
 
-  ui: {
-    // Avoid remote font metadata fetches (googleicons) in restricted networks.
-    fonts: false
-  },
-
   devtools: {
     enabled: true
   },
 
   css: ['~/assets/css/main.css'],
+  ui: {
+    // Avoid remote font metadata fetches (googleicons) in restricted networks.
+    fonts: false
+  },
 
   runtimeConfig: {
     public: {
@@ -29,20 +31,20 @@ export default defineNuxtConfig({
 
   routeRules: {
     '/api/**': {
-      proxy: `${env.NUXT_DEV_PROXY_TARGET || 'http://localhost:8081'}/**`
-    }
-  },
-
-  nitro: {
-    devProxy: {
-      '/api': {
-        target: env.NUXT_DEV_PROXY_TARGET || 'http://localhost:8081',
-        changeOrigin: true
-      }
+      proxy: `${env.NUXT_DEV_PROXY_TARGET || 'http://localhost:9090'}/**`
     }
   },
 
   compatibilityDate: '2025-01-15',
+
+  nitro: {
+    devProxy: {
+      '/api': {
+        target: env.NUXT_DEV_PROXY_TARGET || 'http://localhost:9090',
+        changeOrigin: true
+      }
+    }
+  },
 
   eslint: {
     config: {

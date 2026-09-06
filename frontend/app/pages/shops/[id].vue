@@ -3,7 +3,6 @@ import type { Shop, Voucher } from '~/types/api'
 import { formatFen, resolveImgUrl } from '~/utils/format'
 
 const { $apiData } = useNuxtApp()
-const toast = useToast()
 const route = useRoute()
 const router = useRouter()
 
@@ -35,11 +34,6 @@ function scoreText(score?: number) {
   return (score / 10).toFixed(1)
 }
 
-function isNotBegin(v: Voucher) {
-  if (!v.beginTime) return false
-  return new Date(v.beginTime).getTime() > Date.now()
-}
-
 function isEnd(v: Voucher) {
   if (!v.endTime) return false
   return new Date(v.endTime).getTime() < Date.now()
@@ -50,31 +44,17 @@ function discountText(v: Voucher) {
   const d = (v.payValue * 10) / v.actualValue
   return `${d.toFixed(1)} 折`
 }
-
-async function seckill(v: Voucher) {
-  try {
-    const orderId = await $apiData<number>(`/voucher-order/seckill/${v.id}`, { method: 'POST' })
-    toast.add({
-      title: '抢购成功',
-      description: orderId ? `订单号：${orderId}` : undefined,
-      color: 'success',
-      icon: 'i-lucide-check-circle'
-    })
-  } catch (error) {
-    toast.add({
-      title: '抢购失败',
-      description: (error as any)?.statusMessage || (error as any)?.message,
-      color: 'error',
-      icon: 'i-lucide-x-circle'
-    })
-  }
-}
 </script>
 
 <template>
   <div class="space-y-6">
     <div class="flex items-center gap-2">
-      <UButton color="neutral" variant="ghost" icon="i-lucide-arrow-left" @click="router.back()">
+      <UButton
+        color="neutral"
+        variant="ghost"
+        icon="i-lucide-arrow-left"
+        @click="router.back()"
+      >
         返回
       </UButton>
       <div class="min-w-0">
@@ -87,7 +67,10 @@ async function seckill(v: Voucher) {
       </div>
     </div>
 
-    <div v-if="shopPending" class="text-sm text-muted">
+    <div
+      v-if="shopPending"
+      class="text-sm text-muted"
+    >
       加载中...
     </div>
 
@@ -100,7 +83,10 @@ async function seckill(v: Voucher) {
                 {{ shop.name }}
               </div>
               <div class="flex items-center gap-1 text-sm text-muted">
-                <UIcon name="i-lucide-star" class="size-4 text-primary" />
+                <UIcon
+                  name="i-lucide-star"
+                  class="size-4 text-primary"
+                />
                 <span>{{ scoreText(shop.score) }}</span>
                 <span>·</span>
                 <span>{{ shop.comments }} 条</span>
@@ -112,18 +98,35 @@ async function seckill(v: Voucher) {
             </div>
 
             <div class="flex flex-wrap gap-2 text-sm">
-              <UBadge color="neutral" variant="subtle">
+              <UBadge
+                color="neutral"
+                variant="subtle"
+              >
                 均价 ￥{{ formatFen(shop.avgPrice) }}/人
               </UBadge>
-              <UBadge color="neutral" variant="subtle">
+              <UBadge
+                color="neutral"
+                variant="subtle"
+              >
                 营业 {{ shop.openHours }}
               </UBadge>
             </div>
           </div>
 
-          <div v-if="shopImages.length" class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            <div v-for="(img, idx) in shopImages" :key="idx" class="aspect-video rounded-lg overflow-hidden bg-muted">
-              <img :src="img" :alt="`${shop.name}-${idx}`" class="w-full h-full object-cover">
+          <div
+            v-if="shopImages.length"
+            class="grid grid-cols-2 sm:grid-cols-3 gap-2"
+          >
+            <div
+              v-for="(img, idx) in shopImages"
+              :key="idx"
+              class="aspect-video rounded-lg overflow-hidden bg-muted"
+            >
+              <img
+                :src="img"
+                :alt="`${shop.name}-${idx}`"
+                class="w-full h-full object-cover"
+              >
             </div>
           </div>
         </div>
@@ -141,11 +144,17 @@ async function seckill(v: Voucher) {
           </div>
         </template>
 
-        <div v-if="!vouchers || vouchers.length === 0" class="text-sm text-muted">
+        <div
+          v-if="!vouchers || vouchers.length === 0"
+          class="text-sm text-muted"
+        >
           暂无优惠券
         </div>
 
-        <div v-else class="space-y-3">
+        <div
+          v-else
+          class="space-y-3"
+        >
           <div
             v-for="v in vouchers"
             :key="v.id"
@@ -161,18 +170,32 @@ async function seckill(v: Voucher) {
               </div>
 
               <div class="flex items-center gap-2 mt-2">
-                <UBadge color="primary" variant="subtle">
+                <UBadge
+                  color="primary"
+                  variant="subtle"
+                >
                   ￥{{ formatFen(v.payValue) }}
                 </UBadge>
-                <UBadge v-if="discountText(v)" color="neutral" variant="subtle">
+                <UBadge
+                  v-if="discountText(v)"
+                  color="neutral"
+                  variant="subtle"
+                >
                   {{ discountText(v) }}
                 </UBadge>
-                <UBadge v-if="v.type" color="warning" variant="subtle">
+                <UBadge
+                  v-if="v.type"
+                  color="warning"
+                  variant="subtle"
+                >
                   秒杀
                 </UBadge>
               </div>
 
-              <div v-if="v.type" class="text-xs text-muted mt-2">
+              <div
+                v-if="v.type"
+                class="text-xs text-muted mt-2"
+              >
                 <span v-if="v.stock !== undefined">库存 {{ v.stock }} · </span>
                 <span v-if="v.beginTime && v.endTime">
                   {{ new Date(v.beginTime).toLocaleString() }} ~ {{ new Date(v.endTime).toLocaleString() }}
@@ -185,13 +208,17 @@ async function seckill(v: Voucher) {
                 v-if="v.type"
                 color="primary"
                 size="sm"
-                :disabled="isNotBegin(v) || isEnd(v) || (v.stock !== undefined && v.stock < 1)"
-                @click="seckill(v)"
+                disabled
               >
-                限时抢购
+                下单暂未开放
               </UButton>
-              <UButton v-else color="primary" size="sm" disabled>
-                抢购
+              <UButton
+                v-else
+                color="neutral"
+                size="sm"
+                disabled
+              >
+                仅展示
               </UButton>
             </div>
           </div>
@@ -200,4 +227,3 @@ async function seckill(v: Voucher) {
     </template>
   </div>
 </template>
-

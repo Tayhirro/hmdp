@@ -11,7 +11,10 @@ function isActivePath(path: string) {
   <div class="min-h-screen bg-muted/30">
     <UHeader>
       <template #left>
-        <NuxtLink to="/" class="flex items-center gap-2">
+        <NuxtLink
+          to="/"
+          class="flex items-center gap-2"
+        >
           <AppLogo class="shrink-0" />
         </NuxtLink>
 
@@ -26,6 +29,24 @@ function isActivePath(path: string) {
             发现
           </UButton>
           <UButton
+            to="/feed"
+            color="neutral"
+            :variant="isActivePath('/feed') ? 'subtle' : 'ghost'"
+            icon="i-lucide-layout-list"
+            size="sm"
+          >
+            Feed
+          </UButton>
+          <UButton
+            to="/search"
+            color="neutral"
+            :variant="isActivePath('/search') ? 'subtle' : 'ghost'"
+            icon="i-lucide-search"
+            size="sm"
+          >
+            搜索
+          </UButton>
+          <UButton
             to="/shops"
             color="neutral"
             :variant="isActivePath('/shops') ? 'subtle' : 'ghost'"
@@ -33,6 +54,15 @@ function isActivePath(path: string) {
             size="sm"
           >
             商户
+          </UButton>
+          <UButton
+            to="/manage"
+            color="neutral"
+            :variant="isActivePath('/manage') ? 'subtle' : 'ghost'"
+            icon="i-lucide-settings"
+            size="sm"
+          >
+            管理
           </UButton>
           <UButton
             to="/me"
@@ -60,4 +90,3 @@ function isActivePath(path: string) {
     <AppMobileNav />
   </div>
 </template>
-

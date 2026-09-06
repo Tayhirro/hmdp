@@ -12,9 +12,10 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * <p>
- * 
- * </p>
+ * 用户扩展资料实体，对应数据库表 tb_user_info，主键即用户 ID（与 tb_user 一对一）。
+ *
+ * 主要使用方：UserInfoMapper、UserInfoServiceImpl（UserController.info 经其 getById 查询资料）、
+ * UserServiceImpl（登录时 initUserInfoIfAbsent 保存默认资料，changeInfo 更新 city、introduce、gender、birthday）。
  *
  * @author 虎哥
  * @since 2021-12-24
@@ -52,9 +53,9 @@ public class UserInfo implements Serializable {
     private Integer followee;
 
     /**
-     * 性别，0：男，1：女
+     * 性别，0：男，1：女，2：未知；新用户初始化时默认 2
      */
-    private Integer gender; // 0:男, 1:女, 2:未知
+    private Integer gender;
 
     /**
      * 生日

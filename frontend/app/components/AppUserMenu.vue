@@ -46,19 +46,36 @@ const items = computed(() => ([
     <UColorModeButton />
 
     <template v-if="auth.isLoggedIn">
-      <UDropdownMenu :items="items" :content="{ align: 'end' }">
-        <UButton color="neutral" variant="ghost" class="rounded-full">
-          <UAvatar :src="avatarSrc" size="xs" />
+      <UDropdownMenu
+        :items="items"
+        :content="{ align: 'end' }"
+      >
+        <UButton
+          color="neutral"
+          variant="ghost"
+          class="rounded-full"
+        >
+          <UAvatar
+            :src="avatarSrc"
+            size="xs"
+          />
           <span class="hidden sm:inline text-sm ml-1 max-w-28 truncate">
             {{ displayName }}
           </span>
-          <UIcon name="i-lucide-chevron-down" class="size-4 ml-1 opacity-70" />
+          <UIcon
+            name="i-lucide-chevron-down"
+            class="size-4 ml-1 opacity-70"
+          />
         </UButton>
       </UDropdownMenu>
     </template>
 
     <template v-else>
-      <UButton to="/login" color="primary" size="sm">
+      <UButton
+        to="/login"
+        color="primary"
+        size="sm"
+      >
         登录
       </UButton>
     </template>

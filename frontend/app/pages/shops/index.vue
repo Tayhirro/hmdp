@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import type { PageResult, Shop, ShopSearchItem, ShopType } from '~/types/api'
+import { getApiErrorMessage } from '~/utils/api-error'
+import { firstCsvItem, formatFen, resolveImgUrl } from '~/utils/format'
+
 definePageMeta({
   middleware: 'auth'
 })
-
-import type { Shop, ShopType } from '~/types/api'
-import { firstCsvItem, formatFen, resolveImgUrl } from '~/utils/format'
 
 const { $apiData } = useNuxtApp()
 const toast = useToast()
@@ -12,7 +13,7 @@ const route = useRoute()
 const router = useRouter()
 
 const types = ref<ShopType[]>([])
-const shops = ref<Shop[]>([])
+const shops = ref<ShopSearchItem[]>([])
 
 const isLoading = ref(false)
 const isReachEnd = ref(false)
@@ -31,6 +32,10 @@ const effectiveTypeId = computed<number | null>(() => {
 })
 
 const q = computed(() => (typeof route.query.q === 'string' ? route.query.q.trim() : ''))
+const nearby = computed(() => route.query.nearby === '1')
+const longitude = computed(() => typeof route.query.x === 'string' ? Number(route.query.x) : NaN)
+const latitude = computed(() => typeof route.query.y === 'string' ? Number(route.query.y) : NaN)
+const locating = ref(false)
 
 function typeIconUrl(icon: string) {
   return resolveImgUrl(icon) || '/imgs/types/ms.png'
@@ -51,7 +56,10 @@ function applySearch() {
     path: '/shops',
     query: {
       q: value || undefined,
-      typeId: value ? undefined : (effectiveTypeId.value ? String(effectiveTypeId.value) : undefined)
+      typeId: value ? undefined : (effectiveTypeId.value ? String(effectiveTypeId.value) : undefined),
+      nearby: undefined,
+      x: undefined,
+      y: undefined
     }
   })
 }
@@ -60,8 +68,45 @@ function pickType(id: number) {
   router.push({
     path: '/shops',
     query: {
-      typeId: String(id)
+      typeId: String(id),
+      nearby: nearby.value ? '1' : undefined,
+      x: nearby.value && Number.isFinite(longitude.value) ? String(longitude.value) : undefined,
+      y: nearby.value && Number.isFinite(latitude.value) ? String(latitude.value) : undefined
     }
+  })
+}
+
+function useNearby() {
+  if (!import.meta.client || !navigator.geolocation) {
+    toast.add({ title: '当前浏览器不支持定位', color: 'warning' })
+    return
+  }
+  locating.value = true
+  navigator.geolocation.getCurrentPosition(
+    ({ coords }) => {
+      locating.value = false
+      router.push({
+        path: '/shops',
+        query: {
+          typeId: effectiveTypeId.value ? String(effectiveTypeId.value) : undefined,
+          nearby: '1',
+          x: String(coords.longitude),
+          y: String(coords.latitude)
+        }
+      })
+    },
+    (error) => {
+      locating.value = false
+      toast.add({ title: '定位失败', description: error.message, color: 'error' })
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  )
+}
+
+function clearNearby() {
+  router.push({
+    path: '/shops',
+    query: { typeId: effectiveTypeId.value ? String(effectiveTypeId.value) : undefined }
   })
 }
 
@@ -85,25 +130,35 @@ async function loadShops(reset = false) {
 
     let url = ''
     if (q.value) {
-      url = `/shop/of/name?name=${encodeURIComponent(q.value)}&current=${page}`
+      url = `/search/shops?keyword=${encodeURIComponent(q.value)}&current=${page}`
     } else if (effectiveTypeId.value) {
       url = `/shop/of/type?typeId=${effectiveTypeId.value}&current=${page}`
+      if (nearby.value && Number.isFinite(longitude.value) && Number.isFinite(latitude.value)) {
+        url += `&x=${longitude.value}&y=${latitude.value}`
+      }
     } else {
       isReachEnd.value = true
       return
     }
 
-    const data = await $apiData<Shop[]>(url)
-    const list = data ?? []
+    const data = q.value
+      ? await $apiData<PageResult<ShopSearchItem>>(url)
+      : await $apiData<Shop[]>(url)
+    const list = q.value
+      ? ((data as PageResult<ShopSearchItem> | undefined)?.list ?? [])
+      : ((data as Shop[] | undefined) ?? [])
     if (list.length === 0) {
       isReachEnd.value = true
       return
     }
     shops.value.push(...list)
+    if (q.value && !(data as PageResult<ShopSearchItem>).hasMore) {
+      isReachEnd.value = true
+    }
   } catch (error) {
     toast.add({
       title: '加载失败',
-      description: (error as any)?.statusMessage || (error as any)?.message,
+      description: getApiErrorMessage(error),
       color: 'error',
       icon: 'i-lucide-x-circle'
     })
@@ -121,7 +176,7 @@ async function loadMore() {
 await loadTypes()
 await loadShops(true)
 
-watch([() => route.query.typeId, () => route.query.q], async () => {
+watch([() => route.query.typeId, () => route.query.q, () => route.query.x, () => route.query.y], async () => {
   searchInput.value = typeof route.query.q === 'string' ? route.query.q : ''
   await loadShops(true)
 })
@@ -138,12 +193,28 @@ watch([() => route.query.typeId, () => route.query.q], async () => {
           class="flex-1"
           @keyup.enter="applySearch"
         />
-        <UButton color="primary" @click="applySearch">
+        <UButton
+          color="primary"
+          @click="applySearch"
+        >
           搜索
         </UButton>
       </div>
 
-      <div v-if="types.length" class="flex gap-2 overflow-x-auto pb-1">
+      <div
+        v-if="types.length"
+        class="flex gap-2 overflow-x-auto pb-1"
+      >
+        <UButton
+          color="primary"
+          :variant="nearby ? 'subtle' : 'outline'"
+          icon="i-lucide-map-pin"
+          class="shrink-0"
+          :loading="locating"
+          @click="nearby ? clearNearby() : useNearby()"
+        >
+          {{ nearby ? '取消附近' : '附近店铺' }}
+        </UButton>
         <UButton
           v-for="t in types"
           :key="t.id"
@@ -152,7 +223,11 @@ watch([() => route.query.typeId, () => route.query.q], async () => {
           class="shrink-0"
           @click="pickType(t.id)"
         >
-          <img :src="typeIconUrl(t.icon)" :alt="t.name" class="size-5 rounded mr-2">
+          <img
+            :src="typeIconUrl(t.icon)"
+            :alt="t.name"
+            class="size-5 rounded mr-2"
+          >
           <span class="text-sm">
             {{ t.name }}
           </span>
@@ -160,7 +235,10 @@ watch([() => route.query.typeId, () => route.query.q], async () => {
       </div>
     </div>
 
-    <div v-if="shops.length === 0" class="text-sm text-muted">
+    <div
+      v-if="shops.length === 0"
+      class="text-sm text-muted"
+    >
       暂无商户
     </div>
 
@@ -174,7 +252,11 @@ watch([() => route.query.typeId, () => route.query.q], async () => {
         <UCard class="h-full hover:shadow-sm transition-shadow">
           <div class="flex flex-col gap-3">
             <div class="aspect-video rounded-lg overflow-hidden bg-muted">
-              <img :src="shopCover(s.images)" :alt="s.name" class="w-full h-full object-cover">
+              <img
+                :src="shopCover(s.images)"
+                :alt="s.name"
+                class="w-full h-full object-cover"
+              >
             </div>
 
             <div class="space-y-2">
@@ -184,7 +266,10 @@ watch([() => route.query.typeId, () => route.query.q], async () => {
 
               <div class="flex items-center justify-between text-sm text-muted">
                 <div class="flex items-center gap-1">
-                  <UIcon name="i-lucide-star" class="size-4 text-primary" />
+                  <UIcon
+                    name="i-lucide-star"
+                    class="size-4 text-primary"
+                  />
                   <span>{{ shopScore(s.score) }}</span>
                   <span>·</span>
                   <span>{{ s.comments }} 条</span>
@@ -196,6 +281,12 @@ watch([() => route.query.typeId, () => route.query.q], async () => {
 
               <div class="text-sm text-muted line-clamp-1">
                 {{ s.area }} · {{ s.address }}
+              </div>
+              <div
+                v-if="'distance' in s && s.distance !== undefined"
+                class="text-xs text-primary"
+              >
+                距离 {{ s.distance < 1000 ? `${Math.round(s.distance)} 米` : `${(s.distance / 1000).toFixed(1)} 公里` }}
               </div>
             </div>
           </div>

@@ -125,7 +125,7 @@ mvn spring-boot:run                      # Start on port 9090
 | `NOGROUP No such key 'stream.orders'` | Redis Stream group not created | Run `XGROUP CREATE stream.orders g1 $ MKSTREAM` |
 | Flyway fails on existing tables | baseline-version mismatch | Check `baseline-version` in `application.yaml` |
 | Caffeine cache stale | Follow list not invalidated on unfollow | Call `followCache.invalidate(userId)` |
-| Blog liked count out of sync | Redis `BLOG_LIKED_KEY` not synced to MySQL | Sync on read or schedule periodic flush |
+| Blog liked count out of sync | 点赞关系和 `tb_blog.liked` 未在同一事务更新 | 保持关系写入和计数更新处于同一 MySQL 事务 |
 | Lombok compile errors | Annotation processing not enabled | IDE: enable annotation processing for Lombok |
 
 ## Boundaries
@@ -135,6 +135,9 @@ mvn spring-boot:run                      # Start on port 9090
 - Add Flyway migration for DB schema changes (not raw DDL)
 - Use `RedisConstants` for all Redis key construction
 - Keep controllers thin — put logic in service layer
+- Record every completed code or schema change in `fix.md`
+- Update `docs/hmdp-项目架构分析.md` whenever an API, data structure, security boundary, or core flow changes
+- For every fix, update the corresponding architecture section with the implementation mechanism, design purpose, and concrete improvement effect; do not only list changed files or code
 
 ### ⚠️ Ask First
 - Changing auth provider (Session / JWT / Redis-token)

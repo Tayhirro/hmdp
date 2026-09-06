@@ -12,9 +12,10 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 
 /**
- * <p>
- * 
- * </p>
+ * 商铺实体，对应数据库表 tb_shop。
+ *
+ * 主要使用方：ShopMapper、ShopServiceImpl（详情、更新、按类型分页或 Redis GEO 按距离查询、删除）、
+ * MySqlShopSearchService（按名称搜索店铺）；博客（Blog.shopId）和优惠券（Voucher.shopId）通过 ID 关联商铺。
  *
  * @author 虎哥
  * @since 2021-12-22
@@ -63,7 +64,7 @@ public class Shop implements Serializable {
     private Double x;
 
     /**
-     * 维度
+     * 纬度
      */
     private Double y;
 
@@ -103,6 +104,10 @@ public class Shop implements Serializable {
     private LocalDateTime updateTime;
 
 
+    /**
+     * 与当前用户位置的距离，单位米。非数据库列（TableField exist = false），
+     * 仅在按位置查询店铺时由 ShopServiceImpl.queryShopByType 用 Redis GEO 返回的距离填充。
+     */
     @TableField(exist = false)
     private Double distance;
 }

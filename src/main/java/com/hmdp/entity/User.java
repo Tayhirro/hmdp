@@ -11,9 +11,11 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 
 /**
- * <p>
- * 
- * </p>
+ * 用户账号实体，对应数据库表 tb_user，account 与 phone 各有唯一索引。
+ *
+ * 主要使用方：UserMapper、UserServiceImpl（注册、登录、签到、绑定手机号等用户主流程）、
+ * MySqlUserSearchService（仅按昵称搜索并只取公开三列）。
+ * 对外一律通过 UserDTO 暴露，account、phone、password 等敏感字段不出现在响应中。
  *
  * @author 虎哥
  * @since 2021-12-22
@@ -48,7 +50,7 @@ public class User implements Serializable {
     private String password;
 
     /**
-     * 昵称，默认是随机字符
+     * 昵称，注册时由服务端生成：前缀加 10 位随机字符
      */
     private String nickName;
 

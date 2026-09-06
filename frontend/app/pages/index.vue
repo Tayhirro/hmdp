@@ -1,22 +1,32 @@
 <script setup lang="ts">
+import type { BlogCard, BlogDetail, BlogLikeState, CursorPage, ShopType } from '~/types/api'
+import { firstCsvItem, resolveImgUrl } from '~/utils/format'
+
 definePageMeta({
   middleware: 'auth'
 })
 
-import type { Blog, ShopType } from '~/types/api'
-import { firstCsvItem, resolveImgUrl } from '~/utils/format'
+interface ApiErrorDetails {
+  message?: string
+  statusCode?: number
+  statusMessage?: string
+}
+
+function getApiErrorDetails(error: unknown): ApiErrorDetails {
+  return typeof error === 'object' && error !== null ? error as ApiErrorDetails : {}
+}
 
 const { $apiData } = useNuxtApp()
 const toast = useToast()
 
 const search = ref('')
 
-async function toShopSearch() {
+async function toSearch() {
   const q = search.value.trim()
   if (!q) return
 
   await navigateTo({
-    path: '/shops',
+    path: '/search',
     query: { q }
   })
 }
@@ -27,13 +37,19 @@ function typeIconUrl(icon: string) {
   return resolveImgUrl(icon) || '/imgs/types/ms.png'
 }
 
-const blogPage = ref(1)
-const blogs = ref<Blog[]>([])
+const blogs = ref<BlogCard[]>([])
+const hotCursor = ref<string>()
 const isLoadingMore = ref(false)
 const isReachEnd = ref(false)
+const pendingLikeIds = reactive(new Set<number>())
 
-const { data: firstBlogs } = await useAsyncData('hot-blogs-1', () => $apiData<Blog[]>('/blog/hot?current=1'))
-blogs.value = (firstBlogs.value ?? []).map(b => ({ ...b, isLike: Boolean(b.isLike) }))
+const { data: firstBlogs } = await useAsyncData(
+  'hot-blogs-first',
+  () => $apiData<CursorPage<BlogCard>>('/blog/hot?limit=10')
+)
+blogs.value = (firstBlogs.value?.list ?? []).map(b => ({ ...b, isLike: Boolean(b.isLike) }))
+hotCursor.value = firstBlogs.value?.nextCursor
+isReachEnd.value = !firstBlogs.value?.hasMore
 
 function blogCover(images: string) {
   return resolveImgUrl(firstCsvItem(images)) || '/imgs/blogs/blog1.jpg'
@@ -43,20 +59,18 @@ async function loadMoreBlogs() {
   if (isLoadingMore.value || isReachEnd.value) return
 
   isLoadingMore.value = true
-  const next = blogPage.value + 1
-
   try {
-    const more = await $apiData<Blog[]>(`/blog/hot?current=${next}`)
-    if (!more || more.length === 0) {
-      isReachEnd.value = true
-      return
-    }
-    blogs.value.push(...more.map(b => ({ ...b, isLike: Boolean(b.isLike) })))
-    blogPage.value = next
+    const query = new URLSearchParams({ limit: '10' })
+    if (hotCursor.value) query.set('cursor', hotCursor.value)
+    const page = await $apiData<CursorPage<BlogCard>>(`/blog/hot?${query}`)
+    blogs.value.push(...(page?.list ?? []).map(b => ({ ...b, isLike: Boolean(b.isLike) })))
+    hotCursor.value = page?.nextCursor
+    isReachEnd.value = !page?.hasMore
   } catch (error) {
+    const apiError = getApiErrorDetails(error)
     toast.add({
       title: '加载失败',
-      description: (error as any)?.statusMessage || (error as any)?.message,
+      description: apiError.statusMessage || apiError.message,
       color: 'error',
       icon: 'i-lucide-x-circle'
     })
@@ -65,19 +79,27 @@ async function loadMoreBlogs() {
   }
 }
 
-async function likeBlog(blog: Blog) {
+/**
+ * 客户端只表达意图，不推算结果：请求中禁止同博客重复提交；
+ * 成功时以服务端 { liked, likeCount } 覆盖本地，结果不明时 GET 回源校准。
+ */
+async function likeBlog(blog: BlogCard) {
+  if (pendingLikeIds.has(blog.id)) return
+
+  const shouldLike = !blog.isLike
+  pendingLikeIds.add(blog.id)
   try {
-    const message = await $apiData<string>(`/blog/like/${blog.id}`, { method: 'PUT' })
-    if (message?.includes('取消')) {
-      blog.liked = Math.max(0, (blog.liked || 0) - 1)
-      blog.isLike = false
-    } else {
-      blog.liked = (blog.liked || 0) + 1
-      blog.isLike = true
+    const state = await $apiData<BlogLikeState>(`/blog/${blog.id}/like`, {
+      method: shouldLike ? 'PUT' : 'DELETE'
+    })
+    if (!state) {
+      throw new Error('点赞状态响应为空')
     }
+    blog.isLike = state.liked
+    blog.liked = state.likeCount
   } catch (error) {
-    const statusCode = (error as any)?.statusCode
-    if (statusCode === 401) {
+    const apiError = getApiErrorDetails(error)
+    if (apiError.statusCode === 401) {
       toast.add({
         title: '请先登录',
         color: 'warning',
@@ -87,12 +109,24 @@ async function likeBlog(blog: Blog) {
       return
     }
 
+    try {
+      const refreshed = await $apiData<BlogDetail>(`/blog/${blog.id}`)
+      if (refreshed) {
+        blog.isLike = Boolean(refreshed.isLike)
+        blog.liked = refreshed.liked
+      }
+    } catch {
+      // 网络仍不可用时保留原状态，不在客户端猜测写入结果。
+    }
+
     toast.add({
       title: '操作失败',
-      description: (error as any)?.statusMessage || (error as any)?.message,
+      description: apiError.statusMessage || apiError.message,
       color: 'error',
       icon: 'i-lucide-x-circle'
     })
+  } finally {
+    pendingLikeIds.delete(blog.id)
   }
 }
 </script>
@@ -114,11 +148,14 @@ async function likeBlog(blog: Blog) {
           <UInput
             v-model="search"
             icon="i-lucide-search"
-            placeholder="搜索商户名"
+            placeholder="搜索店铺、笔记或用户"
             class="flex-1"
-            @keyup.enter="toShopSearch"
+            @keyup.enter="toSearch"
           />
-          <UButton color="primary" @click="toShopSearch">
+          <UButton
+            color="primary"
+            @click="toSearch"
+          >
             搜索
           </UButton>
         </div>
@@ -130,7 +167,12 @@ async function likeBlog(blog: Blog) {
         <h2 class="text-lg font-semibold text-highlighted">
           分类
         </h2>
-        <UButton to="/shops" color="neutral" variant="ghost" trailing-icon="i-lucide-arrow-right">
+        <UButton
+          to="/shops"
+          color="neutral"
+          variant="ghost"
+          trailing-icon="i-lucide-arrow-right"
+        >
           全部商户
         </UButton>
       </div>
@@ -163,34 +205,59 @@ async function likeBlog(blog: Blog) {
         </h2>
       </div>
 
-      <div v-if="blogs.length === 0" class="text-sm text-muted">
+      <div
+        v-if="blogs.length === 0"
+        class="text-sm text-muted"
+      >
         暂无数据
       </div>
 
       <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <UCard v-for="b in blogs" :key="b.id" class="overflow-hidden">
+        <UCard
+          v-for="b in blogs"
+          :key="b.id"
+          class="overflow-hidden"
+        >
           <div class="flex flex-col gap-3">
-            <div class="aspect-video rounded-lg overflow-hidden bg-muted">
-              <img :src="blogCover(b.images)" :alt="b.title" class="w-full h-full object-cover">
-            </div>
+            <NuxtLink
+              :to="`/blogs/${b.id}`"
+              class="aspect-video rounded-lg overflow-hidden bg-muted block"
+            >
+              <img
+                :src="blogCover(b.images)"
+                :alt="b.title"
+                class="w-full h-full object-cover"
+              >
+            </NuxtLink>
 
             <div class="space-y-2">
-              <div class="text-base font-semibold text-highlighted line-clamp-2">
+              <NuxtLink
+                :to="`/blogs/${b.id}`"
+                class="text-base font-semibold text-highlighted line-clamp-2 hover:text-primary"
+              >
                 {{ b.title }}
-              </div>
+              </NuxtLink>
 
               <div class="flex items-center justify-between gap-3">
-                <div class="flex items-center gap-2 min-w-0">
-                  <UAvatar :src="resolveImgUrl(b.icon) || '/imgs/icons/default-icon.png'" size="xs" />
+                <NuxtLink
+                  :to="`/users/${b.userId}`"
+                  class="flex items-center gap-2 min-w-0"
+                >
+                  <UAvatar
+                    :src="resolveImgUrl(b.icon) || '/imgs/icons/default-icon.png'"
+                    size="xs"
+                  />
                   <span class="text-sm text-muted truncate">
                     {{ b.name || '匿名用户' }}
                   </span>
-                </div>
+                </NuxtLink>
 
                 <UButton
                   size="xs"
                   variant="ghost"
                   :color="b.isLike ? 'primary' : 'neutral'"
+                  :loading="pendingLikeIds.has(b.id)"
+                  :disabled="pendingLikeIds.has(b.id)"
                   @click="likeBlog(b)"
                 >
                   <UIcon
@@ -198,7 +265,10 @@ async function likeBlog(blog: Blog) {
                     class="size-4"
                     :class="b.isLike ? 'text-primary' : 'text-muted'"
                   />
-                  <span class="ml-1 text-sm" :class="b.isLike ? 'text-primary' : 'text-muted'">
+                  <span
+                    class="ml-1 text-sm"
+                    :class="b.isLike ? 'text-primary' : 'text-muted'"
+                  >
                     {{ b.liked }}
                   </span>
                 </UButton>

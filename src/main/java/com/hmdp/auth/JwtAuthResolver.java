@@ -23,11 +23,7 @@ import javax.crypto.spec.SecretKeySpec;
  * 注意：
  * - JWT 的 payload 默认不加密，只是 Base64URL 编码
  * - 防篡改靠 signature（验签）
- *
- * 
  * headerBase64Url.payloadBase64Url.signatureBase64Url
- * 
- * 
  */
 
 // {
@@ -50,10 +46,33 @@ public class JwtAuthResolver implements AuthResolver {
 
     private final byte[] secret; //
 
+    /**
+     * 创建 JWT 解析器并保存 HMAC-SHA256 验签密钥。
+     *
+     * 使用场景：Spring 启动时由 {@link com.hmdp.config.AuthResolverConfig}（认证解析器装配配置类）
+     * 的 jwtAuthResolver 方法创建；
+     * 当前该工厂方法硬编码传入 null（未接配置项 hmdp.auth.jwt.secret，默认为空），
+     * 密钥为空时 resolve 会直接返回 null，即本解析器实际不生效。
+     *
+     * @param secret 验签密钥（UTF-8 字节），为 null 时按空密钥处理
+     */
     public JwtAuthResolver(String secret) {
         this.secret = secret == null ? new byte[0] : secret.getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * 从请求头 authorization 中解析并校验 JWT，还原当前登录用户。
+     *
+     * 使用场景：每次 HTTP 请求由 {@link CompositeAuthResolver}（组合解析器）调用（auto 模式下排在第一位）。
+     * 校验链：取 header authorization，剥离可选的 "Bearer " 前缀（忽略大小写），
+     * token 必须恰好含 2 个 '.'（header.payload.signature，否则视为 Redis token 直接放弃），
+     * 密钥非空，header 的 alg 必须为 HS256，验签通过，未过期，最后从 payload
+     * 的 id/nickName/icon 三个 claim 组装 {@link UserDTO}（用户 DTO，id 缺失则失败）。
+     * 任一步失败都返回 null，不抛异常。
+     *
+     * @param request 当前 HTTP 请求
+     * @return 校验全部通过时返回用户信息；否则返回 null
+     */
     @Override
     @Nullable
     public UserDTO resolve(HttpServletRequest request) {
@@ -131,6 +150,19 @@ public class JwtAuthResolver implements AuthResolver {
         return user;
     }
 
+    /**
+     * 用 HS256 重算签名并与 token 携带的签名比对。
+     *
+     * 使用场景：{@link #resolve} 在读取 header/payload 之后调用，验签通过才继续解析 claims。
+     * 算法：对 signingInput（即 "header.payload" 的原始 Base64URL 文本，US-ASCII 字节）
+     * 用构造时保存的密钥做 HmacSHA256，再与 Base64URL 解码后的签名做
+     * MessageDigest.isEqual 常量时间比较，防止时序攻击。
+     * MAC 初始化失败或签名 Base64URL 非法都按验签失败（false）处理。
+     *
+     * @param signingInput 待验签的 "header.payload" 原文
+     * @param signatureB64 token 第三段的 Base64URL 签名
+     * @return true 表示签名一致未被篡改
+     */
     private boolean verifyHs256(String signingInput, String signatureB64) {
         // 输入 ----加密--->  对比 签名
         byte[] expected;
@@ -150,6 +182,17 @@ public class JwtAuthResolver implements AuthResolver {
         return MessageDigest.isEqual(expected, actual);
     }
 
+    /**
+     * 校验 JWT 是否处于生效时间窗之外（未生效或已过期）。
+     *
+     * 使用场景：{@link #resolve} 验签通过后调用。claims 中：
+     * nbf（not before，Unix 秒）存在且当前时间早于它，视为未生效；
+     * exp（expire，Unix 秒）存在且当前时间大于等于它，视为已过期。
+     * 两个 claim 都可缺省，缺省即不做该项限制。
+     *
+     * @param claims JWT payload 的键值对
+     * @return true 表示不可用（未生效或已过期）
+     */
     // notbefore or notafter
     private static boolean isExpired(Map<String, Object> claims) {
         long now = Instant.now().getEpochSecond();
@@ -161,6 +204,16 @@ public class JwtAuthResolver implements AuthResolver {
         return exp != null && now >= exp;
     }
 
+    /**
+     * 把 JSON claim 值宽容地转换为 Long。
+     *
+     * 使用场景：{@link #resolve} 读取 id claim、{@link #isExpired} 读取 nbf/exp claim 时调用。
+     * 规则：Number 直接取 longValue；字符串去空白后按十进制解析；null、空串、
+     * 非数字字符串或其他类型一律返回 null。
+     *
+     * @param value 原始 claim 值
+     * @return 转换后的 Long；无法转换时返回 null
+     */
     private static Long getLong(Object value) {
         if (value == null) {
             return null;
